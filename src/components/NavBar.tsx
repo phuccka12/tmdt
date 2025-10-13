@@ -1,7 +1,14 @@
 import React from 'react';
 import { Link } from 'react-router-dom'; // Import Link từ react-router-dom
 
-const navItems = ['TRANG CHỦ', 'NỮ', 'NAM', 'PHỤ KIỆN', 'BỘ SƯU TẬP', 'SALE OFF'];
+const navItems = [
+  { label: 'TRANG CHỦ', path: '/' },
+  { label: 'NỮ', path: '/nu' },
+  { label: 'NAM', path: '/nam' },
+  { label: 'PHỤ KIỆN', path: '/phu-kien' },
+  { label: 'BỘ SƯU TẬP', path: '/bo-suu-tap' },
+  { label: 'SALE OFF', path: '/sale-off' },
+];
 
 const NavBar: React.FC = () => {
   return (
@@ -9,10 +16,10 @@ const NavBar: React.FC = () => {
       {navItems.map((item, index) => (
         <Link
           key={index}
-          to={`/${item.toLowerCase().replace(' ', '-')}`}  // Chuyển đổi tên thành đường dẫn đúng
+          to={item.path}
           className="text-sm font-bold text-gray-800 hover:text-orange-500 transition-all duration-300 transform hover:scale-105 uppercase py-2 px-4 rounded-lg hover:bg-orange-50"
         >
-          {item}
+          {item.label}
         </Link>
       ))}
     </nav>
