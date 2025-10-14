@@ -18,7 +18,8 @@ const RequireAdmin: React.FC<{ children: React.ReactNode }> = ({ children }) => 
 
       // Prefer checking profiles.role if exists
       const { data: profiles, error } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-      const role = profiles?.role || user.user_metadata?.role || 'user';
+      let role = profiles?.role || user.user_metadata?.role || 'user';
+      if (typeof role === 'string') role = role.trim().toLowerCase();
       if (!mounted) return;
       if (role !== 'admin') {
         navigate('/');

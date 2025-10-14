@@ -22,9 +22,15 @@ const Header: React.FC<HeaderProps> = ({ cartCount, user }) => {
         if (!user) return;
         // Try to read role from profiles table
         const { data: profile } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-        const role = profile?.role || user.user_metadata?.role || 'user';
-        if (!mounted) return;
-        setIsAdmin(role === 'admin');
+        let isAdmin = false;
+        const profileRole = profile?.role;
+        const metadataRole = user?.user_metadata?.role;
+        if (typeof profileRole === 'string') {
+          isAdmin = profileRole.trim().toLowerCase() === 'admin';
+        } else if (typeof metadataRole === 'string') {
+          isAdmin = metadataRole.trim().toLowerCase() === 'admin';
+        }
+        setIsAdmin(isAdmin);
       } catch (e) {
         // ignore
       }
