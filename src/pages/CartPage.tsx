@@ -77,6 +77,8 @@ const CartPage: React.FC = () => {
     }, 0);
   }, [rows]);
 
+  // simplified: single mock payment flow
+
   const updateQty = async (rowId: number, next: number) => {
     if (next <= 0) return removeRow(rowId);
     const { error } = await supabase.from('cart').update({ quantity: next }).eq('id', rowId);
@@ -180,8 +182,49 @@ const CartPage: React.FC = () => {
               <span>{formatVnd(subtotal)}</span>
             </div>
 
+            <div className="mb-4">
+              <div className="text-sm font-medium mb-2">Thanh toán (chế độ mock)</div>
+              <div className="text-gray-500 text-sm">Hiện tại tích hợp nhà cung cấp đã được loại bỏ. Sử dụng mock payment để kiểm thử.</div>
+            </div>
+
             <button
-              onClick={() => alert('Checkout sẽ làm ở bước kế tiếp 😉')}
+              onClick={async () => {
+                try {
+                  const backend = import.meta.env.VITE_BACKEND_URL || 'http://localhost:8787';
+
+                  const { data: userRes } = await supabase.auth.getUser();
+                  const user = userRes?.user;
+
+                  const items = rows.map(r => ({
+                    variant_id: r.variant?.id,
+                    quantity: r.quantity,
+                    unit_amount: r.variant?.price_vnd ?? parseVnd(r.variant?.product?.price),
+                  })).filter(i => i.variant_id != null);
+
+                  if (items.length === 0) return alert('Không có sản phẩm hợp lệ để thanh toán');
+
+                  const resp = await fetch(`${backend}/create-payment-mock`, {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify({
+                      items,
+                      user_id: user?.id || null,
+                      success_url: window.location.origin + '/checkout/success',
+                    }),
+                  });
+
+                  const body = await resp.json();
+                  if (resp.ok && body.url) {
+                    window.location.href = body.url;
+                  } else {
+                    console.error('payment create failed', resp.status, body);
+                    alert('Không thể tạo phiên thanh toán: ' + (body.error || resp.statusText || JSON.stringify(body)));
+                  }
+                } catch (e) {
+                  console.error('Checkout error', e);
+                  alert('Lỗi khi tạo thanh toán: ' + String(e));
+                }
+              }}
               className="w-full bg-black hover:bg-orange-500 text-white py-3 rounded-lg font-bold"
             >
               Thanh toán

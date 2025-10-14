@@ -1,23 +1,34 @@
-import React from 'react';
-import { useEffect } from 'react';
+import React, { useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 
-// This component receives a mapping via props in route config, but for simplicity
-// it maps a path like /nu to a category slug and redirects to /products?category=slug
-const mapping: Record<string,string> = {
-  '/nu': 'nu',
-  '/nam': 'nam',
-  '/phu-kien': 'phu-kien',
-  '/bo-suu-tap': 'bo-suu-tap',
-  '/sale-off': 'sale',
+// Mapping can redirect either to a category slug or to a label filter.
+// For example: '/nu' => /products?category=nu, '/sale-off' => /products?label=SALE
+const mapping: Record<string, { type: 'category' | 'label'; value: string }> = {
+  '/nu': { type: 'category', value: 'nu' },
+  '/nam': { type: 'category', value: 'nam' },
+  '/phu-kien': { type: 'category', value: 'phu-kien' },
+  '/bo-suu-tap': { type: 'category', value: 'bo-suu-tap' },
+  '/sale-off': { type: 'label', value: 'SALE' },
 };
 
 const CategoryRedirect: React.FC = () => {
   const navigate = useNavigate();
+
   useEffect(() => {
     const path = window.location.pathname;
-    const slug = mapping[path] || 'all';
-    navigate(`/products?category=${slug}`);
+    const entry = mapping[path];
+
+    if (!entry) {
+      // default to all products
+      navigate('/products');
+      return;
+    }
+
+    if (entry.type === 'category') {
+      navigate(`/products?category=${encodeURIComponent(entry.value)}`);
+    } else {
+      navigate(`/products?label=${encodeURIComponent(entry.value)}`);
+    }
   }, [navigate]);
 
   return null;

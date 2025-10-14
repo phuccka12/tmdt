@@ -12,7 +12,7 @@ const navItems = [
 
 const NavBar: React.FC = () => {
   return (
-    <nav className="hidden lg:flex items-center justify-between space-x-8 py-4 border-t border-gray-300 bg-white shadow-md rounded-xl px-6">
+    <nav className="hidden lg:flex items-center justify-between space-x-8 py-4 border-t border-gray-300 bg-white shadow-md rounded-xl px-6 relative z-50 pointer-events-auto">
       {navItems.map((item, index) => (
         <Link
           key={index}
