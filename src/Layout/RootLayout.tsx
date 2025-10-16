@@ -22,7 +22,7 @@ const RootLayout: React.FC = () => {
     };
 
     const { data: sub } = supabase.auth.onAuthStateChange(
-      (_event: { eventType: string }, session: { user?: any } | null) => {
+      (_event, session) => {
         setUser(session?.user ?? null);
         setUserId(session?.user?.id ?? null);
       }
