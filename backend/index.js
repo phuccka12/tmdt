@@ -1,8 +1,10 @@
 const express = require('express');
 const cors = require('cors');
 const dotenv = require('dotenv');
+const path = require('path');
 
-dotenv.config();
+// Load backend/.env explicitly so server works even when started from repo root
+dotenv.config({ path: path.resolve(__dirname, '.env') });
 
 const { createClient } = require('@supabase/supabase-js');
 
@@ -79,6 +81,74 @@ app.delete('/admin/products/:id', requireAdminApiKey, async (req, res) => {
     const { error } = await supabase.from('products').delete().eq('id', id);
     if (error) return res.status(500).json({ error: error.message || error });
     return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || err });
+  }
+});
+
+// Admin: list profiles (basic info)
+app.get('/admin/profiles', requireAdminApiKey, async (req, res) => {
+  try {
+    const { data, error } = await supabase.from('profiles').select('id,full_name,email,role,updated_at').order('updated_at', { ascending: false }).limit(1000);
+    if (error) return res.status(500).json({ error: error.message || error });
+    return res.json({ data });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || err });
+  }
+});
+
+// Admin: monthly reports (income/estimate) based on cart rows
+app.get('/admin/reports/monthly', requireAdminApiKey, async (req, res) => {
+  try {
+    const year = Number(req.query.year) || new Date().getFullYear();
+    const month = Number(req.query.month) || (new Date().getMonth() + 1); // 1-12
+
+    // compute start/end in ISO
+    const start = new Date(Date.UTC(year, month - 1, 1)).toISOString();
+    const end = new Date(Date.UTC(year, month, 1)).toISOString();
+
+    // fetch cart rows within timeframe and embed variant + product
+    const { data, error } = await supabase
+      .from('cart')
+      .select(`id,quantity,created_at,variant:product_variants(id,price_vnd,product:products(id,name,price))`)
+      .gte('created_at', start)
+      .lt('created_at', end);
+
+    if (error) return res.status(500).json({ error: error.message || error });
+
+    const rows = data || [];
+
+    // Helper to parse product.price string like "1.299.000đ"
+    const parsePrice = (p) => {
+      if (!p) return 0;
+      if (typeof p === 'number') return p;
+      try {
+        return Number(String(p).replace(/[^\d]/g, '')) || 0;
+      } catch (e) { return 0; }
+    };
+
+    // Aggregate totals and per-day breakdown
+    const totals = { revenue: 0, items: 0 };
+    const byDay = {}; // YYYY-MM-DD -> { revenue, items }
+
+    for (const r of rows) {
+      const qty = Number(r.quantity) || 0;
+      const variant = r.variant || null;
+      const unit = (variant && (variant.price_vnd || parsePrice(variant.product?.price))) || 0;
+      const rev = unit * qty;
+      totals.revenue += rev;
+      totals.items += qty;
+
+      const day = r.created_at ? new Date(r.created_at).toISOString().slice(0,10) : 'unknown';
+      if (!byDay[day]) byDay[day] = { revenue: 0, items: 0 };
+      byDay[day].revenue += rev;
+      byDay[day].items += qty;
+    }
+
+    // format byDay as array
+    const breakdown = Object.keys(byDay).sort().map(d => ({ day: d, ...byDay[d] }));
+
+    return res.json({ ok: true, period: { year, month }, totals, breakdown, rowsCount: rows.length });
   } catch (err) {
     return res.status(500).json({ error: err.message || err });
   }
