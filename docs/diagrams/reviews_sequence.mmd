@@ -1,0 +1,9 @@
+sequenceDiagram
+  participant U as User
+  participant F as Frontend
+  participant API as Supabase REST
+
+  U->>F: Submit review (rating, text)
+  F->>API: POST /rest/v1/reviews {user_id, product_id, rating, body}
+  API-->>F: 201 created
+  F-->>U: thanks / display review

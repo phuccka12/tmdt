@@ -1,0 +1,11 @@
+sequenceDiagram
+  participant U as User
+  participant F as Frontend
+  participant R as Supabase Realtime
+  participant DB as Supabase/Postgres
+
+  U->>F: Add item to cart (client)
+  F->>DB: write cart row
+  DB-->>R: broadcast change
+  R-->>F: realtime update
+  F-->>U: update cart count in UI

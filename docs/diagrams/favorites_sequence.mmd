@@ -1,0 +1,9 @@
+sequenceDiagram
+  participant U as User
+  participant F as Frontend
+  participant DB as Supabase/Postgres
+
+  U->>F: Click favorite on product
+  F->>DB: INSERT into favorites {user_id, product_id}
+  DB-->>F: OK
+  F-->>U: heart toggled

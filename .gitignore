@@ -1,0 +1,9 @@
+.env
+backend/.env
+node_modules/
+dist/
+/.env.local
+/.env.development
+/.env.production
+.DS_Store
+.vscode/

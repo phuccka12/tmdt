@@ -1,0 +1,9 @@
+sequenceDiagram
+  participant U as User
+  participant F as Frontend
+  participant API as Supabase REST
+
+  U->>F: Open Home / Category page
+  F->>API: GET /rest/v1/products?select=*
+  API-->>F: products list
+  F-->>U: render product grid

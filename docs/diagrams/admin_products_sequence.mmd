@@ -1,0 +1,26 @@
+sequenceDiagram
+  participant A as Admin
+  participant F as Frontend(Admin)
+  participant B as Backend
+  participant DB as Supabase/Postgres
+
+  A->>F: Open Products (Admin dashboard)
+  F->>B: GET /admin/products (x-admin-api-key)
+  B->>DB: SELECT * FROM products
+  DB-->>B: returns rows
+  B-->>F: products JSON
+  F-->>A: render list
+
+  A->>F: Click Create product
+  F->>B: POST /admin/products {id,name,price}
+  B->>DB: UPSERT products
+  DB-->>B: OK
+  B-->>F: created
+  F-->>A: show success
+
+  A->>F: Click Delete
+  F->>B: DELETE /admin/products/:id
+  B->>DB: DELETE FROM products WHERE id=...
+  DB-->>B: OK
+  B-->>F: ok
+  F-->>A: removed

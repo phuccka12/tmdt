@@ -1,0 +1,13 @@
+sequenceDiagram
+  participant U as User
+  participant F as Frontend
+  participant API as Supabase REST
+
+  U->>F: Click product
+  F->>API: GET /rest/v1/products?id=eq.<id>&select=*,variants(*)
+  API-->>F: product + variants
+  F-->>U: render product detail
+  U->>F: Click Add to Cart
+  F->>API: (if using DB cart) POST /rest/v1/cart {user_id, product, qty}
+  API-->>F: cart row created
+  F-->>U: show cart updated

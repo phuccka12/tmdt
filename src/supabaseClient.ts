@@ -1,8 +1,15 @@
-// src/supabaseClient.js
+// src/supabaseClient.ts
 import { createClient } from '@supabase/supabase-js';
 
-// Cấu hình Supabase với URL và API key của bạn
-const supabaseUrl = 'https://qasmhyhihidvnvikgbrz.supabase.co';  // Thay bằng URL của bạn
-const supabaseAnonKey = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6InFhc21oeWhpaGlkdm52aWtnYnJ6Iiwicm9sZSI6ImFub24iLCJpYXQiOjE3NTkzODk4MzUsImV4cCI6MjA3NDk2NTgzNX0.KL7og9cbLxkQdwwFC7GugLZtuLzLWlvu9HOUfVGUCXY';  // Thay bằng API key của bạn
+// Prefer Vite env variables. For local development, create a .env file with VITE_SUPABASE_URL and VITE_SUPABASE_ANON_KEY
+const supabaseUrl = import.meta.env.VITE_SUPABASE_URL || '';
+const supabaseAnonKey = import.meta.env.VITE_SUPABASE_ANON_KEY || '';
+
+if (!supabaseUrl || !supabaseAnonKey) {
+	// Warn in dev but don't throw so local runs with old keys will still work if you set them in process.env
+	// IMPORTANT: Move any hard-coded keys into environment variables and revoke old keys if they were committed.
+	// eslint-disable-next-line no-console
+	console.warn('[supabaseClient] VITE_SUPABASE_URL or VITE_SUPABASE_ANON_KEY not set. Make sure to set them in .env or your hosting environment.');
+}
 
 export const supabase = createClient(supabaseUrl, supabaseAnonKey);

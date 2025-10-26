@@ -1,0 +1,16 @@
+sequenceDiagram
+  participant U as User
+  participant F as Frontend
+  participant A as Auth (Supabase)
+  participant DB as Supabase/Postgres
+
+  U->>F: Fill signup form (email, password)
+  F->>A: POST /auth/v1/signup
+  A->>DB: create auth user
+  DB-->>A: auth user created
+  A-->>F: 200 OK (session or confirmation)
+  F->>DB: (optional) insert profile row via anon or backend
+  DB-->>F: profile created
+  F-->>U: show welcome / redirect
+
+  note over F,A: Login flow similar: POST /auth/v1/token -> return session

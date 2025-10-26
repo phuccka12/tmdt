@@ -22,6 +22,18 @@ const app = express();
 app.use(cors());
 app.use(express.json());
 
+// Mount payments router (creates orders, momo/vnpay endpoints)
+try {
+  const paymentsRouter = require('./routes/payments');
+  // Log incoming payments requests for debugging
+  app.use('/payments', (req, res, next) => {
+    console.log(`[backend] payments incoming ${req.method} ${req.path}`);
+    next();
+  }, paymentsRouter);
+} catch (err) {
+  console.warn('[backend] payments router not available', err && err.message);
+}
+
 function requireAdminApiKey(req, res, next) {
   // Require ADMIN_API_KEY to be set in the server environment for admin endpoints.
   // This avoids accidentally exposing admin endpoints when the key isn't configured.

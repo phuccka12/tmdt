@@ -1,0 +1,25 @@
+sequenceDiagram
+    participant U as User
+    participant F as Frontend
+    participant B as Backend
+    participant DB as Supabase/Postgres
+    participant P as PaymentGateway
+
+    U->>F: Click "Checkout" (cart + shipping info)
+    F->>B: POST /orders {cart, address, phone, total}
+    B->>DB: INSERT order, order_items (status: pending)
+    DB-->>B: order_id
+    alt payment required
+      B->>P: Create payment session / request
+      P-->>B: payment_redirect_url / payment_id
+      B-->>F: 302 / {payment_url, order_id}
+      F->>U: Redirect to PaymentGateway
+      U->>P: Complete payment (UI)
+      P-->>B: (webhook) POST /payments/webhook {payment_id, order_id, status}
+      B->>DB: INSERT payment record, update order.status = 'paid' if success
+      DB-->>B: OK
+      B-->>F: notify user (via webhook response or polling)
+    else no payment
+      B->>DB: update order.status = 'paid'
+      B-->>F: order confirmation
+    end

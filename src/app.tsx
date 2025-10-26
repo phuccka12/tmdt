@@ -7,6 +7,7 @@ import CategoryEntry from './pages/CategoryEntry';
 import ProductDetail from './pages/ProductDetail';
 import Auth from './pages/Auth';
 import CartPage from './pages/CartPage';
+import CheckoutSuccess from './pages/CheckoutSuccess';
 import UserAccountPage from './pages/UserAccountPage'
 import FavoritesPage from './pages/Favorites';
 import RequireAdmin from './components/RequireAdmin';
@@ -25,6 +26,7 @@ export default function App() {
         <Route path="product/:id" element={<ProductDetail />} />
         <Route path="auth" element={<Auth />} />
         <Route path="cart" element={<CartPage />} />
+  <Route path="checkout/success" element={<CheckoutSuccess />} />
         <Route path="favorites" element={<FavoritesPage />} />
   <Route path="*" element={<Home />} />
   <Route path="/user-account" element={<UserAccountPage />} />

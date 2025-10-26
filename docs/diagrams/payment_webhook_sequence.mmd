@@ -1,0 +1,20 @@
+sequenceDiagram
+  participant P as PaymentGateway
+  participant B as Backend
+  participant DB as Supabase/Postgres
+  participant A as Admin
+  participant F as Frontend
+
+  P->>B: POST /payments/webhook {payment_id, order_id, status, raw}
+  alt payment successful
+    B->>DB: INSERT payments(... status: success)
+    B->>DB: UPDATE orders SET status='paid' WHERE id=order_id
+    B-->>P: 200 OK
+    B->>F: push notification / update order status
+    B->>A: notify admin of new paid order
+  else payment failed
+    B->>DB: INSERT payments(... status: failed)
+    B->>DB: UPDATE orders SET status='payment_failed' WHERE id=order_id
+    B-->>P: 200 OK
+    B->>F: notify user payment failed
+  end

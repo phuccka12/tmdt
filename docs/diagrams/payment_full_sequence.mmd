@@ -1,0 +1,75 @@
+%% Payment full sequence (checkout -> gateway -> webhook -> order update)
+sequenceDiagram
+  autonumber
+  participant U as User
+  participant F as Frontend
+  participant B as Backend
+  participant DB as Database
+  participant P as PaymentGateway
+  participant N as NotificationService
+  participant A as Admin
+
+  %% 1. Checkout and order creation
+  U->>F: Click "Checkout" with cart + shipping info
+  F->>B: POST /orders {cart, address, phone, total}
+  B->>DB: INSERT orders (status: pending)
+  DB-->>B: order_id returned
+
+  %% 2. Backend creates payment session (if using redirect/session-based gateway)
+  alt Payment requires external gateway
+    B->>P: Create payment session (order_id, amount, return_url, webhook_url)
+    P-->>B: {payment_id, payment_url, expires_at}
+    B-->>F: 200 {order_id, payment_url}
+    F-->>U: redirect to payment_url (or open widget)
+
+    %% 3. User completes payment on gateway
+    U->>P: Complete payment (enter confirmation / bank / app)
+    alt Gateway immediate redirect flow
+      P-->>U: Redirect to return_url?status=success&payment_id=...
+      U->>F: Browser returns to frontend with params
+      F->>B: GET /payments/verify?payment_id=... (optional polling)
+      B->>P: Query payment status
+      P-->>B: {status: success, provider_id}
+      B->>DB: INSERT payments (status: success, raw)
+      B->>DB: UPDATE orders SET status='paid' WHERE id=order_id
+      B->>N: Send notification to user/admin
+      N-->>U: Notify user (email/push)
+    else Gateway webhook flow (recommended)
+      P-->>B: POST /payments/webhook {payment_id, order_id, status, raw}
+      B->>P: 200 OK
+      B->>DB: INSERT payments (status from webhook, raw)
+      alt webhook indicates success
+        B->>DB: UPDATE orders SET status='paid' WHERE id=order_id
+        B->>N: notify user/admin about paid order
+      else payment failed or pending
+        B->>DB: UPDATE orders SET status='payment_failed' WHERE id=order_id
+        B->>N: notify user about failure
+      end
+    end
+  else No external payment (e.g., cash on delivery)
+    B->>DB: UPDATE orders SET status='confirmed' WHERE id=order_id
+    B->>N: notify user/admin
+  end
+
+  %% 4. Admin processing (after paid)
+  B-->>A: (optional) push / email about new paid order
+  A->>B: GET /admin/orders
+  B->>DB: SELECT * FROM orders WHERE ...
+  DB-->>B: returns orders
+  B-->>A: send orders list
+
+  A->>B: PATCH /admin/orders/:id {status:'confirmed'/'shipped'/'cancelled'}
+  B->>DB: UPDATE orders SET status=... WHERE id=...
+  DB-->>B: OK
+  B->>N: notify user of status change
+  N-->>U: notify user
+
+  %% 5. Refunds / disputes (optional)
+  U->>A: Request refund
+  A->>B: POST /admin/orders/:id/refund
+  B->>P: Call provider refund API
+  P-->>B: refund status
+  B->>DB: INSERT payments(status='refunded') / UPDATE order
+  B->>N: notify user/admin
+
+  note over B,P: Always verify webhook signatures and payment amounts before updating DB

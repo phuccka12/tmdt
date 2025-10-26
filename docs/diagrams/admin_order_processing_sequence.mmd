@@ -1,0 +1,22 @@
+sequenceDiagram
+  participant A as Admin
+  participant B as Backend
+  participant DB as Supabase/Postgres
+  participant S as Shipper
+  participant U as User
+
+  A->>B: GET /admin/orders
+  B->>DB: SELECT * FROM orders WHERE ...
+  DB-->>B: orders list
+  B-->>A: return orders
+
+  A->>B: PATCH /admin/orders/:id {status: 'confirmed'/'shipped'/'cancelled'}
+  B->>DB: UPDATE orders SET status=... WHERE id=...
+  DB-->>B: OK
+  B-->>A: ok
+  alt shipped
+    B->>S: create shipment request (optional)
+    S-->>B: tracking_id
+    B->>DB: update order.tracking = tracking_id
+    B->>U: notify user (order shipped)
+  end

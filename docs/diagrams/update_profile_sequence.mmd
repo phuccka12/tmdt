@@ -1,0 +1,17 @@
+sequenceDiagram
+  participant U as User
+  participant F as Frontend
+  participant A as Supabase Auth
+  participant DB as Supabase/Postgres
+
+  U->>F: Open account page, click Edit
+  F->>A: supabase.auth.getUser() (fetch session)
+  A-->>F: user object
+  U->>F: Submit updated fields (full_name, phone, address)
+  F->>A: supabase.auth.updateUser({ data:{ full_name, phone, address } })
+  A-->>F: 200 OK (auth metadata updated)
+  alt also persist to profiles table
+    F->>DB: upsert profiles {id:user.id, full_name, phone, address}
+    DB-->>F: OK
+  end
+  F-->>U: show success message

@@ -1,0 +1,13 @@
+sequenceDiagram
+  participant U as User
+  participant F as Frontend
+  participant DB as Supabase/Postgres
+
+  U->>F: View Cart
+  F->>DB: GET /rest/v1/cart?user_id=eq.<user_id>
+  DB-->>F: cart rows
+  F-->>U: render cart
+  U->>F: Update qty / Remove
+  F->>DB: PATCH/DELETE cart row
+  DB-->>F: OK
+  F-->>U: updated totals
