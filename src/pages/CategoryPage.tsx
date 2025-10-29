@@ -7,7 +7,7 @@ import { Filter, Loader2 } from 'lucide-react';
 
 type CategoryRow = { id: number; name: string; slug: string };
 
-const PAGE_SIZE = 6;
+const PAGE_SIZE = 12;
 const LABELS = ['all', 'HOT', 'NEW', 'SALE'] as const;
 type LabelFilter = typeof LABELS[number];
 

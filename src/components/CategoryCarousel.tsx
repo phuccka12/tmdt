@@ -22,7 +22,7 @@ const CategoryCarousel: React.FC = () => {
   useEffect(() => {
     const fetchCategories = async () => {
       const { data, error } = await supabase
-        .from('categories_with_counts') // view đã tạo bằng SQL
+        .from('categories_with_counts') 
         .select('*');
 
       if (error) {
