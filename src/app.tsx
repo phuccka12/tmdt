@@ -11,7 +11,7 @@ import CheckoutSuccess from './pages/CheckoutSuccess';
 import UserAccountPage from './pages/UserAccountPage'
 import FavoritesPage from './pages/Favorites';
 import RequireAdmin from './components/RequireAdmin';
-import AdminDashboard from './pages/AdminDashboard';
+import AdminLayout from './pages/admin/AdminLayout';
 export default function App() {
   return (
     <Routes>
@@ -30,7 +30,7 @@ export default function App() {
         <Route path="favorites" element={<FavoritesPage />} />
   <Route path="*" element={<Home />} />
   <Route path="/user-account" element={<UserAccountPage />} />
-  <Route path="admin" element={<RequireAdmin><AdminDashboard/></RequireAdmin>} />
+  <Route path="admin" element={<AdminLayout />} />
        
       </Route>
     </Routes>

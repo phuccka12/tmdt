@@ -7,6 +7,13 @@ const path = require('path');
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 
 const { createClient } = require('@supabase/supabase-js');
+// Ensure fetch is available on Node (Node 18+ has global fetch). Fallback to node-fetch if needed.
+let fetchFn = global.fetch;
+try {
+  if (!fetchFn) fetchFn = require('node-fetch');
+} catch (e) {
+  // node-fetch not installed or cannot be required; if global fetch missing, password updates will fail later with clear error
+}
 
 const SUPABASE_URL = process.env.SUPABASE_URL;
 const SUPABASE_SERVICE_ROLE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY;
@@ -24,12 +31,12 @@ app.use(express.json());
 
 // Mount payments router (creates orders, momo/vnpay endpoints)
 try {
-  const paymentsRouter = require('./routes/payments');
-  // Log incoming payments requests for debugging
-  app.use('/payments', (req, res, next) => {
-    console.log(`[backend] payments incoming ${req.method} ${req.path}`);
-    next();
-  }, paymentsRouter);
+  // const paymentsRouter = require('./routes/payments');
+  // // Log incoming payments requests for debugging
+  // app.use('/payments', (req, res, next) => {
+  //   console.log(`[backend] payments incoming ${req.method} ${req.path}`);
+  //   next();
+  // }, paymentsRouter);
 } catch (err) {
   console.warn('[backend] payments router not available', err && err.message);
 }
@@ -98,12 +105,107 @@ app.delete('/admin/products/:id', requireAdminApiKey, async (req, res) => {
   }
 });
 
-// Admin: list profiles (basic info)
+// Admin: create profile
+app.post('/admin/profiles', requireAdminApiKey, async (req, res) => {
+  try {
+    const { email, password, full_name } = req.body;
+    if (!email || !password) return res.status(400).json({ error: 'email and password required' });
+    
+    // Create user in auth
+    const { data: authData, error: authError } = await supabase.auth.admin.createUser({
+      email,
+      password,
+      user_metadata: { full_name }
+    });
+    if (authError) return res.status(500).json({ error: authError.message || authError });
+    
+    // Upsert profile
+    const { data: profileData, error: profileError } = await supabase.from('profiles').upsert({ 
+      id: authData.user.id, 
+      full_name, 
+      email 
+    }).select();
+    if (profileError) return res.status(500).json({ error: profileError.message || profileError });
+    
+    return res.json({ data: profileData });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || err });
+  }
+});
+
+// Admin: list profiles
 app.get('/admin/profiles', requireAdminApiKey, async (req, res) => {
   try {
-    const { data, error } = await supabase.from('profiles').select('id,full_name,email,role,updated_at').order('updated_at', { ascending: false }).limit(1000);
+    const { data, error } = await supabase.from('profiles').select('*').order('updated_at', { ascending: false });
     if (error) return res.status(500).json({ error: error.message || error });
     return res.json({ data });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || err });
+  }
+});
+
+// Admin: update profile
+app.put('/admin/profiles/:id', requireAdminApiKey, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { full_name, email, password } = req.body;
+    console.log('[backend] update profile', { id, full_name, email, hasPassword: !!password });
+
+    // Update profile row
+    const { data, error } = await supabase.from('profiles').update({ full_name, email }).eq('id', id).select();
+    if (error) {
+      console.error('[backend] profiles.update error', error);
+      return res.status(500).json({ error: error.message || error });
+    }
+
+    // If password provided, call Supabase Admin REST API to update user's password
+    if (password) {
+      if (!SUPABASE_SERVICE_ROLE_KEY || !SUPABASE_URL) {
+        console.error('[backend] cannot update password - service role key or url missing');
+        return res.status(500).json({ error: 'Server missing Supabase service role key or URL' });
+      }
+
+      const updateUrl = `${SUPABASE_URL.replace(/\/$/, '')}/auth/v1/admin/users/${id}`;
+      try {
+        console.log('[backend] calling supabase admin REST to update password for', id);
+        const updateResponse = await fetchFn(updateUrl, {
+          method: 'PUT',
+          headers: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${SUPABASE_SERVICE_ROLE_KEY}`,
+            'apikey': SUPABASE_SERVICE_ROLE_KEY,
+          },
+          body: JSON.stringify({ password }),
+        });
+
+        if (!updateResponse.ok) {
+          const errorText = await updateResponse.text();
+          console.error('[backend] supabase admin update failed', updateResponse.status, errorText);
+          return res.status(500).json({ error: `Failed to update password: ${errorText}` });
+        }
+
+        const updateData = await updateResponse.json();
+        console.log('[backend] password updated successfully', updateData);
+      } catch (e) {
+        console.error('[backend] error calling supabase admin REST', e);
+        return res.status(500).json({ error: e.message || e });
+      }
+    }
+
+    return res.json({ data });
+  } catch (err) {
+    console.error('[backend] update profile error', err);
+    return res.status(500).json({ error: err.message || err });
+  }
+});
+
+// Admin: delete profile
+app.delete('/admin/profiles/:id', requireAdminApiKey, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { error } = await supabase.from('profiles').delete().eq('id', id);
+    if (error) return res.status(500).json({ error: error.message || error });
+    return res.json({ success: true });
   } catch (err) {
     return res.status(500).json({ error: err.message || err });
   }
@@ -167,4 +269,5 @@ app.get('/admin/reports/monthly', requireAdminApiKey, async (req, res) => {
 });
 
 const port = process.env.PORT || 54321;
+console.log('[backend] Starting server on port', port);
 app.listen(port, () => console.log(`[backend] admin server listening on ${port}`));
