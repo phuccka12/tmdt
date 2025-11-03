@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useState } from 'react';
 import { supabase } from '../../supabaseClient';
+import Pagination from '../../components/Pagination';
 
 const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:54321';
 const adminApiKey = import.meta.env.VITE_ADMIN_API_KEY || '';
@@ -20,6 +21,17 @@ const formatPrice = (v: any) => {
 
 // storage bucket name for product images
 const PRODUCT_BUCKET = 'product-images';
+
+// helper: map label text to badge classes (bg + text color)
+const labelBadgeClass = (label?: string) => {
+  if (!label) return 'bg-gray-800 text-white';
+  const l = String(label).toLowerCase();
+  if (l.includes('sale') || l.includes('hot') || l.includes('discount')) return 'bg-red-600 text-white';
+  if (l.includes('new') || l.includes('fresh')) return 'bg-green-600 text-white';
+  if (l.includes('exclusive') || l.includes('vip')) return 'bg-purple-600 text-white';
+  if (l.includes('limited')) return 'bg-yellow-400 text-black';
+  return 'bg-gray-800 text-white';
+};
 
 // helper: convert File to base64 (without data:* prefix)
 const fileToBase64 = (file: File): Promise<string> => new Promise((resolve, reject) => {
@@ -42,12 +54,14 @@ const ProductEditForm: React.FC<{ product: Product; onCancel: () => void; onSave
   const [image, setImage] = useState(product.image || '');
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+  const [label, setLabel] = useState(product.label || '');
 
   const submit = async () => {
     if (!name.trim()) return alert('Tên sản phẩm là bắt buộc');
     const parsedPrice = price ? (isNaN(Number(String(price).replace(/[^\d.-]/g, '')) ) ? null : Number(String(price).replace(/[^\d.-]/g, '')) ) : undefined;
     if (price && parsedPrice === null) return alert('Giá không hợp lệ');
     try {
+      const trimmedLabel = label ? label.trim() : '';
       let imageUrl = image;
       if (file) {
         setUploading(true);
@@ -71,7 +85,7 @@ const ProductEditForm: React.FC<{ product: Product; onCancel: () => void; onSave
           imageUrl = respBody.publicUrl || imageUrl;
         }
       }
-      await onSave({ id: product.id, name: name.trim(), price: parsedPrice ?? price, image: imageUrl });
+  await onSave({ id: product.id, name: name.trim(), price: parsedPrice ?? price, image: imageUrl, label: trimmedLabel });
     } catch (e: any) {
       console.error('edit upload', e);
       const errMsg = e?.message || String(e);
@@ -79,7 +93,7 @@ const ProductEditForm: React.FC<{ product: Product; onCancel: () => void; onSave
         // Fallback: update product without uploading image so admin can continue
         alert(`Upload ảnh thất bại: bucket "${PRODUCT_BUCKET}" không tồn tại. Cập nhật sản phẩm không thay đổi ảnh (fallback). Vui lòng tạo bucket trên Supabase Storage để bật upload.`);
         try {
-          await onSave({ id: product.id, name: name.trim(), price: parsedPrice ?? price, image: image || product.image || '' });
+          await onSave({ id: product.id, name: name.trim(), price: parsedPrice ?? price, image: image || product.image || '', label: (label || product.label || '') });
         } catch (inner: any) {
           console.error('edit fallback failed', inner);
           alert('Cập nhật sản phẩm thất bại sau khi fallback: ' + (inner?.message || String(inner)));
@@ -101,6 +115,10 @@ const ProductEditForm: React.FC<{ product: Product; onCancel: () => void; onSave
         <div className="mb-3">
           <label className="block text-sm font-medium mb-1 text-gray-700">Giá</label>
           <input value={price} onChange={e => setPrice(e.target.value)} className="border-gray-300 border rounded px-3 py-2 w-full focus:ring-indigo-500 focus:border-indigo-500" />
+        </div>
+        <div className="mb-3">
+          <label className="block text-sm font-medium mb-1 text-gray-700">Nhãn</label>
+          <input value={label} onChange={e => setLabel(e.target.value)} className="border-gray-300 border rounded px-3 py-2 w-full focus:ring-indigo-500 focus:border-indigo-500" />
         </div>
         <div className="mb-3">
           <label className="block text-sm font-medium mb-1 text-gray-700">URL ảnh</label>
@@ -127,6 +145,9 @@ const ProductsAdmin: React.FC = () => {
   const [products, setProducts] = useState<Product[]>([]);
   const [productsLoading, setProductsLoading] = useState(false);
   const [prodSearch, setProdSearch] = useState('');
+  // pagination state
+  const [page, setPage] = useState(1);
+  const PAGE_SIZE = 9; // 3 cols x 3 rows grid
   const [creating, setCreating] = useState(false); // Vẫn được dùng bởi createProduct, (mặc dù form con ko biết)
   const [editingProduct, setEditingProduct] = useState<Product | null>(null);
   const [editLoading, setEditLoading] = useState(false);
@@ -135,6 +156,11 @@ const ProductsAdmin: React.FC = () => {
   useEffect(() => {
     fetchProducts();
   }, []);
+
+  // reset page when search query changes
+  useEffect(() => {
+    setPage(1);
+  }, [prodSearch]);
 
   const fetchProducts = async () => {
     setProductsLoading(true);
@@ -217,6 +243,12 @@ const ProductsAdmin: React.FC = () => {
     return products.filter(p => String(p.id).includes(q) || (p.name || '').toLowerCase().includes(q));
   }, [products, prodSearch]);
 
+  const total = filteredProducts.length;
+  const pagedProducts = useMemo(() => {
+    const start = (page - 1) * PAGE_SIZE;
+    return filteredProducts.slice(start, start + PAGE_SIZE);
+  }, [filteredProducts, page]);
+
   const renderLoadingSkeleton = () => (
     <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
       {[1, 2, 3].map(i => (
@@ -258,13 +290,23 @@ const ProductsAdmin: React.FC = () => {
       {productsLoading ? (
         renderLoadingSkeleton()
       ) : (
-        filteredProducts.length === 0 ? (
+        total === 0 ? (
           renderEmptyState()
         ) : (
-          <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
-            {filteredProducts.map(p => (
+          <>
+            <div className="grid grid-cols-1 sm:grid-cols-2 lg:grid-cols-3 gap-6">
+              {pagedProducts.map(p => (
               <div key={p.id} className="bg-white rounded-lg shadow hover:shadow-lg transition overflow-hidden">
-                <div className="h-44 bg-gray-100 flex items-center justify-center overflow-hidden">
+                <div className="h-44 bg-gray-100 flex items-center justify-center overflow-hidden relative">
+                  {/* label badge (top-left) */}
+                  {p.label && (
+                    <div
+                      className={`absolute top-2 left-2 ${labelBadgeClass(p.label)} text-xs font-semibold px-2 py-1 rounded uppercase max-w-[6rem] truncate`}
+                      title={p.label}
+                    >
+                      {p.label}
+                    </div>
+                  )}
                   {p.image ? (
                     <img src={p.image} alt={p.name} className="w-full h-full object-cover" />
                   ) : (
@@ -295,7 +337,11 @@ const ProductsAdmin: React.FC = () => {
                 </div>
               </div>
             ))}
-          </div>
+            </div>
+
+            {/* pagination controls */}
+            <Pagination page={page} total={total} pageSize={PAGE_SIZE} onChange={setPage} />
+          </>
         )
       )}
 
@@ -317,6 +363,7 @@ const ProductCreateForm: React.FC<{ onCreate: (p: Partial<Product>) => void }> =
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
+  const [label, setLabel] = useState('');
   const [image, setImage] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
@@ -351,7 +398,7 @@ const ProductCreateForm: React.FC<{ onCreate: (p: Partial<Product>) => void }> =
           imageUrl = respBody.publicUrl || imageUrl;
         }
       }
-      await onCreate({ name: name.trim(), price: parsedPrice ?? price, image: imageUrl });
+  await onCreate({ name: name.trim(), price: parsedPrice ?? price, image: imageUrl, label: label ? label.trim() : '' });
       setName('');
       setPrice('');
       setImage('');
@@ -364,7 +411,7 @@ const ProductCreateForm: React.FC<{ onCreate: (p: Partial<Product>) => void }> =
         // Inform user but fallback to create product without image so admin can continue
         alert(`Upload ảnh thất bại: bucket "${PRODUCT_BUCKET}" không tồn tại. Tạo sản phẩm không có ảnh (fallback). Vui lòng tạo bucket trên Supabase Storage để bật upload.`);
         try {
-          await onCreate({ name: name.trim(), price: parsedPrice ?? price, image: '' });
+          await onCreate({ name: name.trim(), price: parsedPrice ?? price, image: '', label: label ? label.trim() : '' });
           setName('');
           setPrice('');
           setImage('');
@@ -398,6 +445,10 @@ const ProductCreateForm: React.FC<{ onCreate: (p: Partial<Product>) => void }> =
             <div className="mb-3">
               <label className="block text-sm font-medium mb-1 text-gray-700">Giá</label>
               <input value={price} onChange={e => setPrice(e.target.value)} className="border-gray-300 border rounded px-3 py-2 w-full focus:ring-indigo-500 focus:border-indigo-500" />
+            </div>
+            <div className="mb-3">
+              <label className="block text-sm font-medium mb-1 text-gray-700">Nhãn</label>
+              <input value={label} onChange={e => setLabel(e.target.value)} className="border-gray-300 border rounded px-3 py-2 w-full focus:ring-indigo-500 focus:border-indigo-500" />
             </div>
             <div className="mb-3">
               <label className="block text-sm font-medium mb-1 text-gray-700">URL ảnh</label>

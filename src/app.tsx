@@ -6,6 +6,7 @@ import CategoryRedirect from './pages/CategoryRedirect';
 import CategoryEntry from './pages/CategoryEntry';
 import ProductDetail from './pages/ProductDetail';
 import Auth from './pages/Auth';
+import ResetPassword from './pages/ResetPassword';
 import CartPage from './pages/CartPage';
 import CheckoutSuccess from './pages/CheckoutSuccess';
 import UserAccountPage from './pages/UserAccountPage'
@@ -25,6 +26,7 @@ export default function App() {
   <Route path="sale-off" element={<CategoryEntry label="SALE"/>} />
         <Route path="product/:id" element={<ProductDetail />} />
         <Route path="auth" element={<Auth />} />
+  <Route path="auth/reset-password" element={<ResetPassword />} />
         <Route path="cart" element={<CartPage />} />
   <Route path="checkout/success" element={<CheckoutSuccess />} />
         <Route path="favorites" element={<FavoritesPage />} />

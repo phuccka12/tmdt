@@ -11,6 +11,10 @@ const Auth: React.FC = () => {
   const [loading, setLoading] = useState(false);
   const [note, setNote] = useState<string | null>(null);
   const [showPassword, setShowPassword] = useState(false); // Trạng thái ẩn/hiện mật khẩu
+  const [showForgot, setShowForgot] = useState(false);
+  const [forgotEmail, setForgotEmail] = useState('');
+  const [forgotLoading, setForgotLoading] = useState(false);
+  const [forgotNote, setForgotNote] = useState<string | null>(null);
 
   const navigate = useNavigate();
 
@@ -21,7 +25,8 @@ const Auth: React.FC = () => {
         // NOTE: avoid sending redirectTo here to prevent 400 errors if the URL
         // is not whitelisted in Supabase Auth settings. We'll rely on default flow.
         try {
-          const { data, error } = await supabase.auth.signUp({ email, password }, { data: { full_name: fullName } });
+          // signUp with email/password. Metadata will be upserted into profiles table separately.
+          const { data, error } = await supabase.auth.signUp({ email, password });
           console.log('[Auth] signUp result', { data, error });
 
       if (error) {
@@ -73,14 +78,32 @@ const Auth: React.FC = () => {
     setLoading(true);
     setNote(null);
 
-    const { error } = await supabase.auth.api.resetPasswordForEmail(email);
-
-    setLoading(false);
-    if (error) {
-      setNote(error.message);
-    } else {
-      setNote('Đã gửi email hướng dẫn thay đổi mật khẩu. Vui lòng kiểm tra email của bạn.');
+    // Validate email
+    if (!email || !email.includes('@')) {
+      setLoading(false);
+      setNote('Vui lòng nhập email hợp lệ để nhận hướng dẫn đổi mật khẩu.');
+      return;
     }
+
+      try {
+        // Redirect back to an in-app reset page after user clicks the email link.
+        // Make sure the URL is whitelisted in Supabase Auth settings.
+        const redirectTo = `${window.location.origin}/auth/reset-password`;
+        // use auth client resetPasswordForEmail (v2)
+        const result = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
+        // Log result for debugging (do not expose tokens)
+        console.log('[Auth] resetPasswordForEmail result', result);
+        setLoading(false);
+        // v2 returns { data, error }
+        // Show message based on error presence
+        // @ts-ignore
+        if (result?.error) setNote(result.error.message || String(result.error));
+        else setNote('Đã gửi email hướng dẫn thay đổi mật khẩu. Vui lòng kiểm tra email của bạn.');
+      } catch (e: any) {
+        setLoading(false);
+        console.error('[Auth] forgot password error', e);
+        setNote(e?.message || 'Có lỗi xảy ra. Vui lòng thử lại sau.');
+      }
   };
 
   const togglePassword = () => {
@@ -151,7 +174,7 @@ const Auth: React.FC = () => {
 </div>
 
 
-        {note && <div className="text-sm text-red-600 mb-4">{note}</div>}
+        {note && <div className="text-sm text-emerald-800 mb-4">{note}</div>}
 
         <button
           onClick={tab === 'signin' ? onSignIn : onSignUp}
@@ -163,11 +186,58 @@ const Auth: React.FC = () => {
         </button>
 
         <button
-          onClick={onForgotPassword}
-          className="text-sm text-blue-500 hover:underline"
+          type="button"
+          onClick={() => { setShowForgot(true); setForgotEmail(email || ''); setForgotNote(null); }}
+          className={`text-sm text-blue-500 hover:underline`}
         >
           Quên mật khẩu?
         </button>
+
+        {showForgot ? (
+          <div className="fixed inset-0 z-50 grid place-items-center px-4">
+            <div className="absolute inset-0 bg-black/40" onClick={() => setShowForgot(false)} />
+            <div className="relative bg-white rounded-2xl shadow-lg p-6 w-full max-w-md">
+              <h3 className="text-lg font-bold mb-2">Quên mật khẩu</h3>
+              <p className="text-sm text-gray-600 mb-4">Nhập email để nhận đường link đặt lại mật khẩu.</p>
+              {forgotNote && <div className="text-sm text-red-600 mb-2">{forgotNote}</div>}
+              <input
+                type="email"
+                value={forgotEmail}
+                onChange={(e) => setForgotEmail(e.target.value)}
+                className="w-full border rounded-lg px-3 py-2 mb-4"
+                placeholder="you@example.com"
+              />
+              <div className="flex gap-2 justify-end">
+                <button type="button" onClick={() => setShowForgot(false)} className="px-4 py-2 rounded-lg border">Hủy</button>
+                <button
+                  type="button"
+                  onClick={async () => {
+                    setForgotNote(null);
+                    if (!forgotEmail || !forgotEmail.includes('@')) return setForgotNote('Vui lòng nhập email hợp lệ');
+                    setForgotLoading(true);
+                    try {
+                      const redirectTo = `${window.location.origin}/auth/reset-password`;
+                      const result = await supabase.auth.resetPasswordForEmail(forgotEmail, { redirectTo });
+                      console.log('[Auth] resetPasswordForEmail (modal) result', result);
+                      // @ts-ignore
+                      if (result?.error) setForgotNote(result.error.message || String(result.error));
+                      else setForgotNote('Đã gửi email hướng dẫn thay đổi mật khẩu. Vui lòng kiểm tra email của bạn.');
+                    } catch (e: any) {
+                      console.error('[Auth] forgot modal error', e);
+                      setForgotNote(e?.message || 'Có lỗi xảy ra');
+                    } finally {
+                      setForgotLoading(false);
+                    }
+                  }}
+                  disabled={forgotLoading}
+                  className={`px-4 py-2 rounded-lg bg-black text-white ${forgotLoading ? 'opacity-60' : 'hover:bg-orange-500'}`}                
+                >
+                  {forgotLoading ? 'Đang gửi...' : 'Gửi'}
+                </button>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         <button
           onClick={() => setTab(tab === 'signin' ? 'signup' : 'signin')}
