@@ -39,7 +39,7 @@ const banners = [
   },
    {
     id: 6,
-    image: 'https://images.unsplash.com/photo-1591311630200-ffa9120a540f?ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&q=80&w=1110',
+    image: 'https://images.unsplash.com/photo-1506197061617-7f5c0b093236?ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&q=80&w=1118',
     title: 'TRANG BỊ CHO NHÀ VÔ ĐỊCH',
     subtitle: 'Đừng chỉ tập, hãy chinh phục',
     cta: 'KHÁM PHÁ NGAY'
