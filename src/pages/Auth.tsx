@@ -249,5 +249,4 @@ const Auth: React.FC = () => {
     </section>
   );
 };
-
-export default Auth;
+export default Auth; 
