@@ -35,33 +35,92 @@ const ReportsAdmin: React.FC = () => {
     } finally { setReportLoading(false); }
   };
 
+  const monthNames = ['Tháng 1', 'Tháng 2', 'Tháng 3', 'Tháng 4', 'Tháng 5', 'Tháng 6', 'Tháng 7', 'Tháng 8', 'Tháng 9', 'Tháng 10', 'Tháng 11', 'Tháng 12'];
+
   return (
     <div>
-      <h2 className="text-xl font-bold mb-4">Báo cáo Doanh thu</h2>
-      <div className="mb-4 flex items-center gap-3">
-        <select value={reportMonth} onChange={e=>setReportMonth(Number(e.target.value))} className="border rounded px-3 py-2">
-          {Array.from({length:12}).map((_,i)=> <option key={i+1} value={i+1}>{i+1}</option>)}
+      <h2 className="text-2xl font-bold mb-6">📊 Báo cáo Doanh thu</h2>
+      
+      <div className="mb-6 flex items-center gap-3 bg-gray-50 p-4 rounded-lg">
+        <label className="font-semibold text-gray-700">Chọn tháng:</label>
+        <select value={reportMonth} onChange={e=>setReportMonth(Number(e.target.value))} className="border rounded-lg px-4 py-2 bg-white">
+          {Array.from({length:12}).map((_,i)=> <option key={i+1} value={i+1}>{monthNames[i]}</option>)}
         </select>
-        <input type="number" value={reportYear} onChange={e=>setReportYear(Number(e.target.value))} className="border rounded px-3 py-2 w-28" />
-        <button onClick={fetchReport} className="px-4 py-2 bg-black text-white rounded">Xem báo cáo</button>
+        <input type="number" value={reportYear} onChange={e=>setReportYear(Number(e.target.value))} className="border rounded-lg px-4 py-2 w-32 bg-white" placeholder="Năm" />
+        <button onClick={fetchReport} className="px-6 py-2 bg-black text-white rounded-lg hover:bg-gray-800 transition-colors font-semibold">
+          Xem báo cáo
+        </button>
       </div>
 
-      {reportLoading ? <div>Đang tải...</div> : report ? (
-        <div>
-          <div className="mb-3">Tổng doanh thu ước tính: <strong className="text-green-600">{report.totals?.revenue || 0}</strong></div>
-          <div className="mb-3">Tổng số mặt hàng bán: <strong>{report.totals?.items || 0}</strong></div>
-          <h4 className="font-semibold mt-4">Phân bố theo ngày</h4>
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-2 mt-2">
-            {report.breakdown?.map((b:any) => (
-              <div key={b.day} className="p-2 bg-white rounded shadow-sm">
-                <div className="text-sm text-gray-500">{b.day}</div>
-                <div className="font-bold">Doanh thu: {b.revenue}</div>
-                <div className="text-sm">Số lượng: {b.items}</div>
-              </div>
-            ))}
-          </div>
+      {reportLoading ? (
+        <div className="text-center py-12">
+          <div className="inline-block w-8 h-8 border-4 border-gray-200 border-t-black rounded-full animate-spin"></div>
+          <p className="mt-4 text-gray-600">Đang tải báo cáo...</p>
         </div>
-      ) : <div className="text-gray-500">Chưa có báo cáo</div>}
+      ) : report ? (
+        <div>
+          {/* Summary Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-6 mb-8">
+            <div className="bg-gradient-to-br from-green-500 to-green-600 text-white rounded-xl p-6 shadow-lg">
+              <div className="text-sm opacity-90 mb-1">Tổng doanh thu</div>
+              <div className="text-3xl font-black">{Number(report.totals?.revenue || 0).toLocaleString('vi-VN')}₫</div>
+            </div>
+            <div className="bg-gradient-to-br from-blue-500 to-blue-600 text-white rounded-xl p-6 shadow-lg">
+              <div className="text-sm opacity-90 mb-1">Tổng đơn hàng</div>
+              <div className="text-3xl font-black">{report.totals?.orders || 0}</div>
+            </div>
+            <div className="bg-gradient-to-br from-purple-500 to-purple-600 text-white rounded-xl p-6 shadow-lg">
+              <div className="text-sm opacity-90 mb-1">Sản phẩm bán ra</div>
+              <div className="text-3xl font-black">{report.totals?.items || 0}</div>
+            </div>
+          </div>
+
+          {/* Daily Breakdown */}
+          <h4 className="text-lg font-bold mb-4">📅 Phân bố theo ngày</h4>
+          {report.breakdown && report.breakdown.length > 0 ? (
+            <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
+              {report.breakdown.map((b:any) => (
+                <div key={b.day} className="bg-white border rounded-lg p-4 shadow-sm hover:shadow-md transition-shadow">
+                  <div className="text-sm text-gray-500 mb-2">{b.day}</div>
+                  <div className="text-xl font-bold text-green-600">{Number(b.revenue).toLocaleString('vi-VN')}₫</div>
+                  <div className="text-sm text-gray-600 mt-1">{b.orders} đơn • {b.items} sản phẩm</div>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <p className="text-gray-500 text-center py-8">Không có dữ liệu trong tháng này</p>
+          )}
+
+          {/* Simple Bar Chart */}
+          {report.breakdown && report.breakdown.length > 0 && (
+            <div className="mt-8">
+              <h4 className="text-lg font-bold mb-4">📈 Biểu đồ doanh thu</h4>
+              <div className="bg-gray-50 p-6 rounded-lg">
+                <div className="flex items-end justify-between gap-2 h-64">
+                  {report.breakdown.map((b: any) => {
+                    const maxRevenue = Math.max(...report.breakdown.map((d: any) => Number(d.revenue) || 0));
+                    const height = maxRevenue > 0 ? ((Number(b.revenue) || 0) / maxRevenue) * 100 : 0;
+                    return (
+                      <div key={b.day} className="flex-1 flex flex-col items-center">
+                        <div 
+                          className="w-full bg-gradient-to-t from-blue-500 to-blue-400 rounded-t-lg transition-all hover:from-blue-600 hover:to-blue-500"
+                          style={{ height: `${height}%`, minHeight: height > 0 ? '4px' : '0' }}
+                          title={`${b.day}: ${Number(b.revenue).toLocaleString('vi-VN')}₫`}
+                        ></div>
+                        <div className="text-xs text-gray-600 mt-2">{b.day.split('-')[2]}</div>
+                      </div>
+                    );
+                  })}
+                </div>
+              </div>
+            </div>
+          )}
+        </div>
+      ) : (
+        <div className="text-center py-12 text-gray-500">
+          <p>Chọn tháng và nhấn "Xem báo cáo" để xem dữ liệu</p>
+        </div>
+      )}
     </div>
   );
 };

@@ -1,9 +1,11 @@
+const paypal = require('../services/paypalClient');
 const express = require('express');
 const crypto = require('crypto');
 const axios = require('axios');
 const qs = require('querystring');
 const path = require('path');
 const { createClient } = require('@supabase/supabase-js');
+const { sendOrderConfirmation } = require('../services/emailService');
 
 // Load backend .env explicitly if this module is started independently
 require('dotenv').config({ path: path.resolve(__dirname, '..', '.env') });
@@ -80,19 +82,34 @@ router.post('/orders', async (req, res) => {
     const shipping_fee = 0;
     const total = Math.max(0, subtotal - discount + shipping_fee);
 
+    // Ensure full_name is provided (DB has NOT NULL constraint). Try body -> profile -> fallback.
+    let fullName = req.body.full_name || null;
+    if (!fullName) {
+      if (user_id) {
+        try {
+          const { data: profile, error: profileErr } = await supabaseAdmin.from('profiles').select('full_name').eq('id', user_id).single();
+          if (!profileErr && profile && profile.full_name) fullName = profile.full_name;
+        } catch (e) {
+          // ignore and fallback
+        }
+      }
+      if (!fullName) fullName = 'Khách hàng';
+    }
+
     // Insert order with subtotal/shipping/total and optional coupon_id
     const { data: orderData, error: orderErr } = await supabaseAdmin
       .from('orders')
       .insert([{
         user_id,
+        full_name: fullName,
         subtotal: subtotal,
         shipping_fee: shipping_fee,
         total: total,
         coupon_id: couponId,
         discount_amount: discount,
         status: payment_method === 'cod' ? 'paid' : 'pending',
-        address: shipping?.address || null,
-        phone: shipping?.phone || null,
+        address: shipping?.address || 'Chưa cung cấp',
+        phone: shipping?.phone || '0000000000',
         created_at: new Date().toISOString()
       }])
       .select()
@@ -116,6 +133,29 @@ router.post('/orders', async (req, res) => {
       raw: { subtotal, discount, shipping_fee }
     }]).select().single();
 
+    // If PayPal payment, create PayPal order and update payments row with provider id and approval link
+    let paymentResponse = paymentRow;
+    let paypalApproveLink = null;
+    if (String(payment_method).toLowerCase() === 'paypal') {
+      try {
+        const return_url = process.env.PAYPAL_RETURN_URL || 'http://localhost:5173/checkout/success';
+        const cancel_url = process.env.PAYPAL_CANCEL_URL || 'http://localhost:5173/checkout/cancel';
+  // PayPal does not support VND in many markets; convert to USD for sandbox testing.
+  const vndToUsdRate = Number(process.env.VND_USD_RATE) || 23000; // configurable via env for accuracy
+  const usdAmount = (Number(total) / vndToUsdRate).toFixed(2);
+  const { id: paypalOrderId, approveLink, raw } = await paypal.createOrder({ total: usdAmount, currency: 'USD', return_url, cancel_url });
+  // attach original VND amount into raw for reference
+  if (raw) raw.original_vnd = total;
+        paypalApproveLink = approveLink;
+        // update payment row with provider_payment_id and raw
+        await supabaseAdmin.from('payments').update({ provider_payment_id: paypalOrderId, raw }).eq('id', paymentRow.id);
+        paymentResponse = { ...paymentRow, provider_payment_id: paypalOrderId };
+      } catch (e) {
+        console.error('[payments] error creating paypal order', e && (e.response ? e.response.data : e.message) || e);
+        // continue - return created order and note that paypal create failed
+      }
+    }
+
     // record coupon usage if used
     if (couponId) {
       try {
@@ -132,8 +172,8 @@ router.post('/orders', async (req, res) => {
       }
     }
 
-    // Always return created payment row along with order so frontend can simulate/redirect
-    return res.json({ ok: true, order: orderData, payment: paymentRow });
+  // Always return created payment row along with order so frontend can simulate/redirect
+  return res.json({ ok: true, order: orderData, payment: paymentResponse, payment_url: paypalApproveLink });
   } catch (err) {
     console.error('[payments] POST /orders error', err);
     return res.status(500).json({ error: err.message || 'server_error' });
@@ -300,6 +340,79 @@ router.get('/vnpay-return', async (req, res) => {
   }
 });
 
+// Simple PayPal capture endpoint - call after buyer approves
+router.post('/paypal/capture', async (req, res) => {
+  try {
+    const { token, order_id } = req.body;
+    if (!token) return res.status(400).json({ error: 'token required' });
+
+    // Call PayPal capture API
+    const result = await paypal.captureOrder(token);
+    
+    // Handle ORDER_ALREADY_CAPTURED - treat as success
+    let capture, captureId, amount, currency;
+    if (!result.success) {
+      const errDetails = result.error?.details?.[0];
+      if (errDetails?.issue === 'ORDER_ALREADY_CAPTURED') {
+        console.log('[paypal/capture] order already captured, proceeding with DB update...');
+        capture = { id: token, status: 'COMPLETED' };
+        captureId = token;
+        amount = '0';
+        currency = 'USD';
+      } else {
+        return res.status(500).json({ error: 'capture_failed', detail: result.error });
+      }
+    } else {
+      capture = result.data;
+      captureId = (capture.purchase_units && capture.purchase_units[0] && capture.purchase_units[0].payments && capture.purchase_units[0].payments.captures && capture.purchase_units[0].payments.captures[0] && capture.purchase_units[0].payments.captures[0].id) || token;
+      amount = (capture.purchase_units && capture.purchase_units[0] && capture.purchase_units[0].payments && capture.purchase_units[0].payments.captures && capture.purchase_units[0].payments.captures[0] && capture.purchase_units[0].payments.captures[0].amount && capture.purchase_units[0].payments.captures[0].amount.value) || '0';
+      currency = (capture.purchase_units && capture.purchase_units[0] && capture.purchase_units[0].payments && capture.purchase_units[0].payments.captures && capture.purchase_units[0].payments.captures[0] && capture.purchase_units[0].payments.captures[0].amount && capture.purchase_units[0].payments.captures[0].amount.currency_code) || 'USD';
+    }
+
+    // Find payment by provider_payment_id = token (order id)
+    const { data: existingPayment } = await supabaseAdmin.from('payments').select('*').eq('provider_payment_id', token).limit(1).single();
+    
+    if (existingPayment) {
+      // Always update payment and order (even if already success - handles ORDER_ALREADY_CAPTURED case)
+      await supabaseAdmin.from('payments').update({ status: 'success', raw: capture }).eq('id', existingPayment.id);
+      await supabaseAdmin.from('orders').update({ status: 'paid' }).eq('id', existingPayment.order_id);
+      
+      // Send order confirmation email
+      try {
+        const { data: orderData } = await supabaseAdmin.from('orders').select('*, order_items(*, products(*)), profiles(email, full_name)').eq('id', existingPayment.order_id).single();
+        if (orderData && orderData.profiles && orderData.profiles.email) {
+          const items = (orderData.order_items || []).map(item => ({
+            name: item.products?.name || 'Sản phẩm',
+            quantity: item.quantity,
+            price: item.price,
+          }));
+          await sendOrderConfirmation({
+            to: orderData.profiles.email,
+            customerName: orderData.profiles.full_name || 'Khách hàng',
+            orderId: existingPayment.order_id,
+            total: orderData.total,
+            items,
+          });
+        }
+      } catch (emailErr) {
+        console.error('[paypal/capture] email send failed (non-blocking):', emailErr);
+      }
+      
+      return res.json({ ok: true, order_id: existingPayment.order_id, capture_id: captureId });
+    } else if (order_id) {
+      // fallback: create payment if not exists
+      await supabaseAdmin.from('payments').insert({ order_id: Number(order_id), provider: 'paypal', provider_payment_id: captureId, amount, currency, status: 'success', raw: capture });
+      await supabaseAdmin.from('orders').update({ status: 'paid' }).eq('id', order_id);
+      return res.json({ ok: true, order_id, capture_id: captureId });
+    } else {
+      return res.status(404).json({ error: 'payment_not_found' });
+    }
+  } catch (err) {
+    console.error('[payments] /paypal/capture error', err);
+    return res.status(500).json({ error: err.message || 'server_error' });
+  }
+});
+
 module.exports = router;
 
 // providers endpoint (returns which external providers are configured)
@@ -309,6 +422,7 @@ router.get('/providers', (req, res) => {
     const providers = {
       momo: Boolean(process.env.MOMO_SECRET_KEY && process.env.MOMO_ACCESS_KEY && process.env.MOMO_PARTNER_CODE && process.env.MOMO_NOTIFY_URL && process.env.MOMO_RETURN_URL),
       vnpay: Boolean(process.env.VNPAY_HASH_SECRET && process.env.VNPAY_TMN_CODE && process.env.VNPAY_PAYMENT_URL && process.env.VNPAY_RETURN_URL),
+      paypal: Boolean(process.env.PAYPAL_CLIENT_ID && process.env.PAYPAL_CLIENT_SECRET),
     };
     return res.json({ ok: true, providers });
   } catch (err) {

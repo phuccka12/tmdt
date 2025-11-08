@@ -127,70 +127,22 @@ const CartPage: React.FC = () => {
   };
 
   const onCheckout = async () => {
-    try {
-      const backend = import.meta.env.VITE_BACKEND_URL || 'http://localhost:54321';
+    const items = selectedRows
+      .map((r) => ({
+        product_id: r.variant?.product?.id ?? null,
+        variant_id: r.variant?.id ?? null,
+        product_name: r.variant?.product?.name || r.variant?.product?.title || null,
+        image: r.variant?.product?.image || null,
+        size: r.variant?.size || null,
+        quantity: r.quantity,
+        unit_price: r.variant?.price_vnd ?? parseVnd(r.variant?.product?.price),
+      }))
+      .filter((i) => i.variant_id != null);
 
-      const { data: userRes } = await supabase.auth.getUser();
-      const user = userRes?.user;
+    if (items.length === 0) return alert('Vui lòng chọn ít nhất 1 sản phẩm để thanh toán');
 
-      const items = selectedRows
-        .map((r) => ({ product_id: r.variant?.product?.id ?? null, variant_id: r.variant?.id ?? null, quantity: r.quantity, unit_price: r.variant?.price_vnd ?? parseVnd(r.variant?.product?.price) }))
-        .filter((i) => i.variant_id != null);
-
-      if (items.length === 0) return alert('Vui lòng chọn ít nhất 1 sản phẩm để thanh toán');
-
-      const method = (paymentMethod || 'simulate').toLowerCase();
-
-      const resp = await fetch(`${backend}/payments/orders`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ items, user_id: user?.id || null, payment_method: method, coupon_code: appliedCoupon?.code || null }),
-      });
-
-      const body = await resp.json();
-      if (!resp.ok || !body.ok) return alert('Không thể tạo đơn hàng: ' + (body.error || resp.statusText || JSON.stringify(body)));
-
-      const order = body.order;
-      const payment = body.payment;
-
-      if (method === 'cod') {
-        try {
-          const { data: user2 } = await supabase.auth.getUser();
-          if (user2?.user?.id) await supabase.from('cart').delete().eq('user_id', user2.user.id);
-        } catch (e) {}
-        navigate('/checkout/success');
-        return;
-      }
-
-      if (method === 'simulate') {
-        const pid = payment?.id;
-        if (!order?.id || !pid) return alert('Không có payment id để simulate');
-        window.location.href = `${backend}/payments/redirect-simulate?order_id=${order.id}&payment_id=${pid}`;
-        return;
-      }
-
-      if (method === 'momo') {
-        const amountToPay = Math.round(Math.max(0, selectedSubtotal - discount));
-        const momoResp = await fetch(`${backend}/payments/momo`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ orderId: order.id, amount: amountToPay, orderInfo: `Đơn hàng ${order.id}` }) });
-        const momoBody = await momoResp.json();
-        if (momoResp.ok && momoBody.payment_url) { window.location.href = momoBody.payment_url; return; }
-        return alert('Tạo payment Momo thất bại');
-      }
-
-      if (method === 'vnpay') {
-        const amountToPay = Math.round(Math.max(0, selectedSubtotal - discount));
-        const q = new URLSearchParams({ orderId: String(order.id), amount: String(amountToPay) });
-        const vnpResp = await fetch(`${backend}/payments/vnpay-create?${q.toString()}`);
-        const vnpBody = await vnpResp.json();
-        if (vnpResp.ok && vnpBody.payment_url) { window.location.href = vnpBody.payment_url; return; }
-        return alert('Tạo payment VNPay thất bại');
-      }
-
-      alert('Phương thức thanh toán không được hỗ trợ');
-    } catch (e) {
-      console.error('Checkout error', e);
-      alert('Lỗi khi tạo thanh toán: ' + String(e));
-    }
+    // Navigate to checkout page, pass items and totals in location state
+    navigate('/checkout', { state: { items, subtotal: selectedSubtotal, discount, appliedCoupon } });
   };
 
   if (loading) {

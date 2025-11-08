@@ -16,34 +16,10 @@ const banners = [
     subtitle: 'Săn sale thả ga - Mua sắm thỏa thích',
     cta: 'XEM NGAY'
   },
-  {
-    id: 3,
-    image: 'https://images.unsplash.com/photo-1599058917212-d750089bc07e?ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&q=80&w=1169',
-    title: 'TRANG BỊ ĐỈNH CAO',
-    subtitle: 'Khám phá ngay thiết bị chuyên nghiệp',
-    cta: 'KHÁM PHÁ NGAY'
-  },
-  {
-    id: 4,
-    image: 'https://plus.unsplash.com/premium_photo-1663036263525-3059e0c47b96?ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&q=80&w=1192',
-    title: 'HÀNG MỚI VỀ',
-    subtitle: 'Sẵn sàng bùng nổ phòng tập',
-    cta: 'XEM NGAY'
-  },
-  {
-    id: 5,
-    image: 'https://images.unsplash.com/photo-1591311630200-ffa9120a540f?ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&q=80&w=1110',
-    title: 'VƯỢT QUA GIỚI HẠN',
-    subtitle: 'Nâng tầm tập luyện ngay hôm nay',
-    cta: 'TÌM KIẾM NGAY'
-  },
-   {
-    id: 6,
-    image: 'https://images.unsplash.com/photo-1506197061617-7f5c0b093236?ixlib=rb-4.1.0&ixid=M3wxMjA3fDB8MHxwaG90by1wYWdlfHx8fGVufDB8fHx8fA%3D%3D&auto=format&fit=crop&q=80&w=1118',
-    title: 'TRANG BỊ CHO NHÀ VÔ ĐỊCH',
-    subtitle: 'Đừng chỉ tập, hãy chinh phục',
-    cta: 'KHÁM PHÁ NGAY'
-  },
+  
+
+
+  
 ];
 
 const BannerSlider: React.FC = () => {

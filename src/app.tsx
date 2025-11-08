@@ -9,10 +9,13 @@ import Auth from './pages/Auth';
 import ResetPassword from './pages/ResetPassword';
 import CartPage from './pages/CartPage';
 import CheckoutSuccess from './pages/CheckoutSuccess';
+import CheckoutPage from './pages/CheckoutPage';
+import OrdersPage from './pages/OrdersPage';
 import UserAccountPage from './pages/UserAccountPage'
 import FavoritesPage from './pages/Favorites';
 import RequireAdmin from './components/RequireAdmin';
 import AdminLayout from './pages/admin/AdminLayout';
+import WebhookDetail from './pages/admin/WebhookDetail';
 export default function App() {
   return (
     <Routes>
@@ -28,11 +31,14 @@ export default function App() {
         <Route path="auth" element={<Auth />} />
   <Route path="auth/reset-password" element={<ResetPassword />} />
         <Route path="cart" element={<CartPage />} />
-  <Route path="checkout/success" element={<CheckoutSuccess />} />
+        <Route path="checkout" element={<CheckoutPage />} />
+        <Route path="checkout/success" element={<CheckoutSuccess />} />
+          <Route path="orders" element={<OrdersPage />} />
         <Route path="favorites" element={<FavoritesPage />} />
   <Route path="*" element={<Home />} />
   <Route path="/user-account" element={<UserAccountPage />} />
   <Route path="admin" element={<AdminLayout />} />
+  <Route path="admin/webhooks/:id" element={<RequireAdmin><WebhookDetail /></RequireAdmin>} />
        
       </Route>
     </Routes>

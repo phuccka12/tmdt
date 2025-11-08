@@ -3,12 +3,9 @@ const cors = require('cors');
 const dotenv = require('dotenv');
 const path = require('path');
 
-// Load backend/.env explicitly so server works even when started from repo root
-dotenv.config({ path: path.resolve(__dirname, '.env') });
 
+dotenv.config({ path: path.resolve(__dirname, '.env') });
 const { createClient } = require('@supabase/supabase-js');
-// Ensure fetch is available on Node (Node 18+ has global fetch). Fallback to node-fetch if needed.
-let fetchFn = global.fetch;
 try {
   if (!fetchFn) fetchFn = require('node-fetch');
 } catch (e) {
@@ -35,16 +32,23 @@ app.use(express.json({ limit: '30mb' }));
 // Also accept URL-encoded bodies up to same limit
 app.use(express.urlencoded({ limit: '30mb', extended: true }));
 
-// Mount payments router (creates orders, momo/vnpay endpoints)
+// Mount payment routes
 try {
-  // const paymentsRouter = require('./routes/payments');
-  // // Log incoming payments requests for debugging
-  // app.use('/payments', (req, res, next) => {
-  //   console.log(`[backend] payments incoming ${req.method} ${req.path}`);
-  //   next();
-  // }, paymentsRouter);
-} catch (err) {
-  console.warn('[backend] payments router not available', err && err.message);
+  const paymentsRouter = require('./routes/payments');
+  // mount at /payments so routes defined inside file map to /payments/*
+  app.use('/payments', paymentsRouter);
+} catch (e) {
+  console.warn('[backend] failed to mount payments routes', e && e.message);
+}
+
+// Mount webhook route
+let webhookModule = null;
+try {
+  // the module exports the register function as default and processPaypalEvent helper
+  webhookModule = require('./routes/webhook_paypal');
+  if (typeof webhookModule === 'function') webhookModule(app, supabase);
+} catch (e) {
+  console.warn('[backend] failed to mount paypal webhook route', e && e.message);
 }
 
 function requireAdminApiKey(req, res, next) {
@@ -86,6 +90,107 @@ app.get('/admin/products', requireAdminApiKey, async (req, res) => {
   }
 });
 
+// Admin: list webhook logs
+app.get('/admin/webhooks', requireAdminApiKey, async (req, res) => {
+  try {
+    const limit = Number(req.query.limit) || 50;
+    const { data, error } = await supabase.from('webhook_logs').select('*').order('created_at', { ascending: false }).limit(limit);
+    if (error) return res.status(500).json({ error: error.message || error });
+    return res.json({ data });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || err });
+  }
+});
+
+// Admin: get single webhook log by id
+app.get('/admin/webhooks/:id', requireAdminApiKey, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid id' });
+    const { data, error } = await supabase.from('webhook_logs').select('*').eq('id', id).limit(1).single();
+    if (error) return res.status(500).json({ error: error.message || error });
+    return res.json({ data });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || err });
+  }
+});
+
+// Temporary debug endpoint to check admin key presence on the running server.
+// This is only enabled when NODE_ENV !== 'production' to avoid accidental exposure.
+if (process.env.NODE_ENV !== 'production') {
+  app.get('/admin/_debug', async (req, res) => {
+    try {
+      return res.json({ ok: true, hasAdminKey: !!ADMIN_API_KEY, adminKeyLength: ADMIN_API_KEY ? ADMIN_API_KEY.length : 0, nodeEnv: process.env.NODE_ENV || 'undefined' });
+    } catch (e) {
+      return res.status(500).json({ ok: false, error: e && e.message ? e.message : String(e) });
+    }
+  });
+}
+
+// Dev-only: simulate a PayPal webhook by inserting a webhook_log and invoking processor
+if (process.env.NODE_ENV !== 'production') {
+  app.post('/admin/webhooks/simulate', requireAdminApiKey, express.json(), async (req, res) => {
+    try {
+      const payload = req.body || {};
+      const event = payload.event || {};
+      // minimal validation
+      if (!event || !event.event_type) return res.status(400).json({ error: 'missing event.event_type' });
+      if (!webhookModule || typeof webhookModule.processPaypalEvent !== 'function') return res.status(500).json({ error: 'webhook processor unavailable' });
+
+      // insert into webhook_logs
+      const insertPayload = {
+        provider: 'paypal',
+        event_type: event.event_type,
+        provider_event_id: event.resource && (event.resource.id || null) || null,
+        headers: {},
+        raw_payload: event,
+        verified: true,
+        processed: false,
+        processing_error: null,
+        created_at: new Date().toISOString()
+      };
+
+      const { data: inserted, error: insertErr } = await supabase.from('webhook_logs').insert(insertPayload).select().limit(1).single();
+      if (insertErr) return res.status(500).json({ error: insertErr.message || insertErr });
+
+      // call processor
+      const result = await webhookModule.processPaypalEvent(supabase, event, inserted);
+      return res.json({ ok: true, inserted, result });
+    } catch (e) {
+      console.error('[admin] simulate webhook error', e);
+      return res.status(500).json({ error: e && e.message ? e.message : String(e) });
+    }
+  });
+}
+
+// Admin: reprocess a stored webhook log (replay processing). Protected by ADMIN_API_KEY.
+app.post('/admin/webhooks/:id/reprocess', requireAdminApiKey, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid id' });
+
+    const { data: logRow, error: fetchErr } = await supabase.from('webhook_logs').select('*').eq('id', id).limit(1).single();
+    if (fetchErr || !logRow) return res.status(404).json({ error: 'webhook log not found', details: fetchErr ? fetchErr.message || fetchErr : null });
+
+    if (!webhookModule || typeof webhookModule.processPaypalEvent !== 'function') {
+      return res.status(500).json({ error: 'webhook processing helper not available on server' });
+    }
+
+    // raw_payload stored as JSONB; pass it to processor
+    const event = logRow.raw_payload || {};
+    try {
+      const result = await webhookModule.processPaypalEvent(supabase, event, logRow);
+      return res.json({ ok: true, result });
+    } catch (e) {
+      // update processing_error on failure
+      try { await supabase.from('webhook_logs').update({ processing_error: String(e && e.message ? e.message : e) }).eq('id', id); } catch (u) {}
+      return res.status(500).json({ error: e && e.message ? e.message : String(e) });
+    }
+  } catch (err) {
+    return res.status(500).json({ error: err.message || err });
+  }
+});
+
 // Admin: create or update product (upsert)
 app.post('/admin/products', requireAdminApiKey, async (req, res) => {
   const payload = req.body || {};
@@ -122,13 +227,11 @@ app.post('/admin/products', requireAdminApiKey, async (req, res) => {
   }
 });
 
-// Admin: upload image via backend (accepts base64 body)
-// Accept either JSON { fileName, fileBase64 } or raw octet-stream with header 'x-file-name'
+// upload ảnh
 app.post('/admin/upload-image', requireAdminApiKey, async (req, res, next) => {
-  // If request has Content-Type: application/octet-stream, we need to parse raw body
+
   const ct = req.headers['content-type'] || '';
   if (ct.includes('application/octet-stream')) {
-    // forward to raw-body handler defined below
     return next();
   }
 
@@ -308,48 +411,42 @@ app.get('/admin/reports/monthly', requireAdminApiKey, async (req, res) => {
     const start = new Date(Date.UTC(year, month - 1, 1)).toISOString();
     const end = new Date(Date.UTC(year, month, 1)).toISOString();
 
-    // fetch cart rows within timeframe and embed variant + product
-    const { data, error } = await supabase
-      .from('cart')
-      .select(`id,quantity,created_at,variant:product_variants(id,price_vnd,product:products(id,name,price))`)
+    // fetch PAID orders within timeframe and embed order_items
+    const { data: ordersData, error: ordersError } = await supabase
+      .from('orders')
+      .select(`id, total, status, created_at, order_items(id, quantity, unit_price)`)
+      .eq('status', 'paid')
       .gte('created_at', start)
       .lt('created_at', end);
 
-    if (error) return res.status(500).json({ error: error.message || error });
+    if (ordersError) return res.status(500).json({ error: ordersError.message || ordersError });
 
-    const rows = data || [];
-
-    // Helper to parse product.price string like "1.299.000đ"
-    const parsePrice = (p) => {
-      if (!p) return 0;
-      if (typeof p === 'number') return p;
-      try {
-        return Number(String(p).replace(/[^\d]/g, '')) || 0;
-      } catch (e) { return 0; }
-    };
+    const orders = ordersData || [];
 
     // Aggregate totals and per-day breakdown
-    const totals = { revenue: 0, items: 0 };
-    const byDay = {}; // YYYY-MM-DD -> { revenue, items }
+    const totals = { revenue: 0, items: 0, orders: 0 };
+    const byDay = {}; // YYYY-MM-DD -> { revenue, items, orders }
 
-    for (const r of rows) {
-      const qty = Number(r.quantity) || 0;
-      const variant = r.variant || null;
-      const unit = (variant && (variant.price_vnd || parsePrice(variant.product?.price))) || 0;
-      const rev = unit * qty;
-      totals.revenue += rev;
-      totals.items += qty;
+    for (const order of orders) {
+      const orderTotal = Number(order.total) || 0;
+      const orderItems = order.order_items || [];
+      const itemsCount = orderItems.reduce((sum, item) => sum + (Number(item.quantity) || 0), 0);
 
-      const day = r.created_at ? new Date(r.created_at).toISOString().slice(0,10) : 'unknown';
-      if (!byDay[day]) byDay[day] = { revenue: 0, items: 0 };
-      byDay[day].revenue += rev;
-      byDay[day].items += qty;
+      totals.revenue += orderTotal;
+      totals.items += itemsCount;
+      totals.orders += 1;
+
+      const day = order.created_at ? new Date(order.created_at).toISOString().slice(0,10) : 'unknown';
+      if (!byDay[day]) byDay[day] = { revenue: 0, items: 0, orders: 0 };
+      byDay[day].revenue += orderTotal;
+      byDay[day].items += itemsCount;
+      byDay[day].orders += 1;
     }
 
     // format byDay as array
     const breakdown = Object.keys(byDay).sort().map(d => ({ day: d, ...byDay[d] }));
 
-    return res.json({ ok: true, period: { year, month }, totals, breakdown, rowsCount: rows.length });
+    return res.json({ ok: true, period: { year, month }, totals, breakdown, ordersCount: orders.length });
   } catch (err) {
     return res.status(500).json({ error: err.message || err });
   }

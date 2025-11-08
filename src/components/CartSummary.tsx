@@ -113,12 +113,38 @@ export default function CartSummary({
                 <span className="text-sm">VNPay</span>
               </label>
             ) : null}
+
+            {providers.paypal ? (
+              <label className="flex items-center gap-3 cursor-pointer">
+                <input type="radio" name="payment" value="paypal" checked={paymentMethod === 'paypal'} onChange={() => setPaymentMethod('paypal')} />
+                <span className="text-sm">PayPal</span>
+              </label>
+            ) : null}
           </div>
         </div>
 
-        <button onClick={onCheckout} disabled={selectedCount === 0} className={`w-full text-white py-3 rounded-xl font-bold transition ${selectedCount === 0 ? 'bg-gray-300 cursor-not-allowed' : 'bg-black hover:bg-orange-500'}`}>
-          Thanh toán
-        </button>
+        {/* If PayPal is configured, show a dedicated PayPal button that triggers checkout with PayPal */}
+        {providers.paypal ? (
+          <div className="space-y-3">
+            <button
+              onClick={() => {
+                setPaymentMethod('paypal');
+                onCheckout();
+              }}
+              disabled={selectedCount === 0}
+              className={`w-full text-white py-3 rounded-xl font-bold transition ${selectedCount === 0 ? 'bg-gray-300 cursor-not-allowed' : 'bg-[#003087] hover:opacity-90'}`}>
+              Thanh toán bằng PayPal
+            </button>
+            <div className="text-center text-sm text-gray-500">Hoặc chọn phương thức khác và nhấn <strong>Thanh toán</strong></div>
+            <button onClick={onCheckout} disabled={selectedCount === 0} className={`w-full text-white py-3 rounded-xl font-bold transition ${selectedCount === 0 ? 'bg-gray-300 cursor-not-allowed' : 'bg-black hover:bg-orange-500'}`}>
+              Thanh toán
+            </button>
+          </div>
+        ) : (
+          <button onClick={onCheckout} disabled={selectedCount === 0} className={`w-full text-white py-3 rounded-xl font-bold transition ${selectedCount === 0 ? 'bg-gray-300 cursor-not-allowed' : 'bg-black hover:bg-orange-500'}`}>
+            Thanh toán
+          </button>
+        )}
 
       </div>
     </div>

@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, lazy, Suspense } from 'react';
 import RequireAdmin from '../../components/RequireAdmin';
 import { LogOut } from 'lucide-react';
 import Overview from './Overview';
@@ -6,8 +6,11 @@ import AccountsAdmin from './AccountsAdmin';
 import ProductsAdmin from './ProductsAdmin';
 import ReportsAdmin from './ReportsAdmin';
 
+// Lazy load WebhooksAdmin to avoid circular import issues
+const WebhooksAdmin = lazy(() => import('./WebhooksAdmin'));
+
 const AdminLayout: React.FC = () => {
-  const [tab, setTab] = useState<'overview' | 'accounts' | 'products' | 'reports'>('overview');
+  const [tab, setTab] = useState<'overview' | 'accounts' | 'products' | 'reports' | 'webhooks'>('overview');
   const adminApiKey = import.meta.env.VITE_ADMIN_API_KEY || '';
 
   const TabButton: React.FC<{ active: boolean; onClick: () => void; children: React.ReactNode }> = ({ active, onClick, children }) => (
@@ -46,6 +49,7 @@ const AdminLayout: React.FC = () => {
             <TabButton active={tab === 'accounts'} onClick={() => setTab('accounts')}>Tài khoản</TabButton>
             <TabButton active={tab === 'products'} onClick={() => setTab('products')}>Sản phẩm</TabButton>
             <TabButton active={tab === 'reports'} onClick={() => setTab('reports')}>Báo cáo</TabButton>
+            <TabButton active={tab === 'webhooks'} onClick={() => setTab('webhooks')}>Webhooks</TabButton>
           </div>
         </div>
 
@@ -56,6 +60,11 @@ const AdminLayout: React.FC = () => {
             {tab === 'accounts' && <AccountsAdmin />}
             {tab === 'products' && <ProductsAdmin />}
             {tab === 'reports' && <ReportsAdmin />}
+            {tab === 'webhooks' && (
+              <Suspense fallback={<div className="text-center py-8">Loading...</div>}>
+                <WebhooksAdmin />
+              </Suspense>
+            )}
           </div>
         </main>
       </div>
