@@ -295,6 +295,53 @@ app.delete('/admin/products/:id', requireAdminApiKey, async (req, res) => {
   }
 });
 
+// Admin: get product variants
+app.get('/admin/products/:id/variants', requireAdminApiKey, async (req, res) => {
+  try {
+    const productId = Number(req.params.id);
+    const { data, error } = await supabase.from('product_variants').select('*').eq('product_id', productId).order('id');
+    if (error) return res.status(500).json({ error: error.message || error });
+    return res.json({ data: data || [] });
+  } catch (err) {
+    console.error('[backend] GET /admin/products/:id/variants error', err);
+    return res.status(500).json({ error: err.message || err });
+  }
+});
+
+// Admin: save product variants
+app.post('/admin/products/:id/variants', requireAdminApiKey, async (req, res) => {
+  try {
+    const productId = Number(req.params.id);
+    const { variants } = req.body; // array of {id?, size, stock, price_vnd}
+    
+    if (!Array.isArray(variants)) return res.status(400).json({ error: 'variants must be array' });
+
+    // Delete old variants not in the new list
+    const newIds = variants.filter(v => v.id).map(v => v.id);
+    if (newIds.length > 0) {
+      await supabase.from('product_variants').delete().eq('product_id', productId).not('id', 'in', `(${newIds.join(',')})`);
+    } else {
+      await supabase.from('product_variants').delete().eq('product_id', productId);
+    }
+
+    // Upsert variants
+    for (const v of variants) {
+      if (v.id) {
+        // Update existing
+        await supabase.from('product_variants').update({ size: v.size, stock: v.stock, price_vnd: v.price_vnd }).eq('id', v.id);
+      } else {
+        // Insert new
+        await supabase.from('product_variants').insert({ product_id: productId, size: v.size, stock: v.stock, price_vnd: v.price_vnd });
+      }
+    }
+
+    return res.json({ ok: true });
+  } catch (err) {
+    console.error('[backend] /admin/products/:id/variants error', err);
+    return res.status(500).json({ error: err.message || err });
+  }
+});
+
 // Admin: create profile
 app.post('/admin/profiles', requireAdminApiKey, async (req, res) => {
   try {
