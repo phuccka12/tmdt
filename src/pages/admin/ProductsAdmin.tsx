@@ -48,6 +48,8 @@ const fileToBase64 = (file: File): Promise<string> => new Promise((resolve, reje
 });
 
 // ProductEditForm component (used by ProductsAdmin)
+type Variant = { id?: number; size: string; stock: number; price_vnd: number };
+
 const ProductEditForm: React.FC<{ product: Product; onCancel: () => void; onSave: (p: Partial<Product> & { id: number }) => void; loading: boolean }> = ({ product, onCancel, onSave, loading }) => {
   const [name, setName] = useState(product.name || '');
   const [price, setPrice] = useState(String(product.price || ''));
@@ -55,11 +57,50 @@ const ProductEditForm: React.FC<{ product: Product; onCancel: () => void; onSave
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
   const [label, setLabel] = useState(product.label || '');
+  const [categoryId, setCategoryId] = useState<number | null>((product as any).category_id || null);
+  const [categories, setCategories] = useState<{id: number; name: string; slug: string}[]>([]);
+  const [variants, setVariants] = useState<Variant[]>([]);
+  const [variantsLoading, setVariantsLoading] = useState(false);
+  const variantsContainerRef = React.useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    // Load categories
+    (async () => {
+      try {
+        const { data } = await supabase.from('categories').select('id, name, slug').order('name');
+        setCategories(data || []);
+      } catch (e) {
+        console.error('Failed to load categories', e);
+      }
+    })();
+  }, []);
+
+  useEffect(() => {
+    // Load variants for this product
+    (async () => {
+      setVariantsLoading(true);
+      try {
+        const { data } = await supabase.from('product_variants').select('id, size, stock, price_vnd').eq('product_id', product.id).order('size');
+        setVariants(data || []);
+      } catch (e) {
+        console.error('Failed to load variants', e);
+      } finally {
+        setVariantsLoading(false);
+      }
+    })();
+  }, [product.id]);
 
   const submit = async () => {
     if (!name.trim()) return alert('Tên sản phẩm là bắt buộc');
-    const parsedPrice = price ? (isNaN(Number(String(price).replace(/[^\d.-]/g, '')) ) ? null : Number(String(price).replace(/[^\d.-]/g, '')) ) : undefined;
-    if (price && parsedPrice === null) return alert('Giá không hợp lệ');
+    
+    // Validate price - allow empty or valid number
+    let finalPrice: number | string | undefined = price;
+    if (price && String(price).trim()) {
+      const numPrice = Number(String(price).trim());
+      if (isNaN(numPrice)) return alert('Giá không hợp lệ');
+      finalPrice = numPrice;
+    }
+    
     try {
       const trimmedLabel = label ? label.trim() : '';
       let imageUrl = image;
@@ -85,7 +126,24 @@ const ProductEditForm: React.FC<{ product: Product; onCancel: () => void; onSave
           imageUrl = respBody.publicUrl || imageUrl;
         }
       }
-  await onSave({ id: product.id, name: name.trim(), price: parsedPrice ?? price, image: imageUrl, label: trimmedLabel });
+  await onSave({ id: product.id, name: name.trim(), price: finalPrice, image: imageUrl, label: trimmedLabel, category_id: categoryId } as any);
+      
+      // Save variants
+      try {
+        const variantsResp = await fetch(`${backendUrl}/admin/products/${product.id}/variants`, {
+          method: 'POST',
+          headers: headersWithKey(),
+          body: JSON.stringify({ variants }),
+        });
+        if (!variantsResp.ok) {
+          const errBody = await variantsResp.json().catch(() => ({}));
+          console.error('Failed to save variants:', errBody);
+          alert('Lưu variants thất bại: ' + (errBody.error || 'Unknown error'));
+        }
+      } catch (varErr) {
+        console.error('Save variants error:', varErr);
+        alert('Lưu variants thất bại: ' + (varErr as any).message);
+      }
     } catch (e: any) {
       console.error('edit upload', e);
       const errMsg = e?.message || String(e);
@@ -93,7 +151,7 @@ const ProductEditForm: React.FC<{ product: Product; onCancel: () => void; onSave
         // Fallback: update product without uploading image so admin can continue
         alert(`Upload ảnh thất bại: bucket "${PRODUCT_BUCKET}" không tồn tại. Cập nhật sản phẩm không thay đổi ảnh (fallback). Vui lòng tạo bucket trên Supabase Storage để bật upload.`);
         try {
-          await onSave({ id: product.id, name: name.trim(), price: parsedPrice ?? price, image: image || product.image || '', label: (label || product.label || '') });
+          await onSave({ id: product.id, name: name.trim(), price: finalPrice, image: image || product.image || '', label: (label || product.label || '') });
         } catch (inner: any) {
           console.error('edit fallback failed', inner);
           alert('Cập nhật sản phẩm thất bại sau khi fallback: ' + (inner?.message || String(inner)));
@@ -106,7 +164,7 @@ const ProductEditForm: React.FC<{ product: Product; onCancel: () => void; onSave
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-      <div className="bg-white p-6 rounded-lg shadow-lg w-full max-w-md">
+      <div className="bg-white p-6 rounded-lg shadow-lg w-full max-w-md max-h-[90vh] overflow-y-auto">
         <h3 className="text-lg font-bold mb-4">Chỉnh sửa sản phẩm #{product.id}</h3>
         <div className="mb-3">
           <label className="block text-sm font-medium mb-1 text-gray-700">Tên</label>
@@ -118,7 +176,16 @@ const ProductEditForm: React.FC<{ product: Product; onCancel: () => void; onSave
         </div>
         <div className="mb-3">
           <label className="block text-sm font-medium mb-1 text-gray-700">Nhãn</label>
-          <input value={label} onChange={e => setLabel(e.target.value)} className="border-gray-300 border rounded px-3 py-2 w-full focus:ring-indigo-500 focus:border-indigo-500" />
+          <input value={label} onChange={e => setLabel(e.target.value)} className="border-gray-300 border rounded px-3 py-2 w-full focus:ring-indigo-500 focus:border-indigo-500" placeholder="HOT, NEW, SALE..." />
+        </div>
+        <div className="mb-3">
+          <label className="block text-sm font-medium mb-1 text-gray-700">Danh mục</label>
+          <select value={categoryId || ''} onChange={e => setCategoryId(e.target.value ? Number(e.target.value) : null)} className="border-gray-300 border rounded px-3 py-2 w-full focus:ring-indigo-500 focus:border-indigo-500">
+            <option value="">-- Chọn danh mục --</option>
+            {categories.map(cat => (
+              <option key={cat.id} value={cat.id}>{cat.name}</option>
+            ))}
+          </select>
         </div>
         <div className="mb-3">
           <label className="block text-sm font-medium mb-1 text-gray-700">URL ảnh</label>
@@ -130,6 +197,95 @@ const ProductEditForm: React.FC<{ product: Product; onCancel: () => void; onSave
             </div>
           )}
         </div>
+
+        {/* Variants Section */}
+        <div className="mb-3 border-t pt-3">
+          <div className="flex justify-between items-center mb-2">
+            <label className="block text-sm font-medium text-gray-700">Variants (Size/Stock/Price)</label>
+            <div className="flex items-center gap-2">
+              <button 
+                type="button"
+                onClick={() => {
+                  setVariants(prev => {
+                    const next = [...prev, { size: '', stock: 0, price_vnd: 0 }];
+                    setTimeout(() => {
+                      if (variantsContainerRef.current) {
+                        variantsContainerRef.current.scrollTo({ top: variantsContainerRef.current.scrollHeight, behavior: 'smooth' });
+                      }
+                    }, 50);
+                    return next;
+                  });
+                }}
+                className="text-sm px-2 py-1 bg-green-500 text-white rounded hover:bg-green-600"
+              >
+                + Thêm
+              </button>
+              <button
+                type="button"
+                onClick={() => {
+                  if (variantsContainerRef.current) {
+                    variantsContainerRef.current.scrollTo({ top: variantsContainerRef.current.scrollHeight, behavior: 'smooth' });
+                  }
+                }}
+                className="text-sm px-2 py-1 bg-gray-200 text-gray-800 rounded hover:bg-gray-300"
+              >
+                Cuộn xuống
+              </button>
+            </div>
+          </div>
+          {variantsLoading ? (
+            <p className="text-sm text-gray-500">Đang tải variants...</p>
+          ) : variants.length === 0 ? (
+            <p className="text-sm text-gray-500">Chưa có variant nào</p>
+          ) : (
+            <div ref={variantsContainerRef} className="space-y-2 max-h-56 overflow-auto pr-2">
+              {variants.map((v, idx) => (
+                <div key={idx} className="flex gap-2 items-center">
+                  <input 
+                    placeholder="Size" 
+                    value={v.size} 
+                    onChange={e => {
+                      const updated = [...variants];
+                      updated[idx].size = e.target.value;
+                      setVariants(updated);
+                    }}
+                    className="border rounded px-2 py-1 w-20 text-sm"
+                  />
+                  <input 
+                    type="number" 
+                    placeholder="Stock" 
+                    value={v.stock} 
+                    onChange={e => {
+                      const updated = [...variants];
+                      updated[idx].stock = Number(e.target.value);
+                      setVariants(updated);
+                    }}
+                    className="border rounded px-2 py-1 w-24 text-sm"
+                  />
+                  <input 
+                    type="number" 
+                    placeholder="Price" 
+                    value={v.price_vnd} 
+                    onChange={e => {
+                      const updated = [...variants];
+                      updated[idx].price_vnd = Number(e.target.value);
+                      setVariants(updated);
+                    }}
+                    className="border rounded px-2 py-1 flex-1 text-sm"
+                  />
+                  <button 
+                    type="button"
+                    onClick={() => setVariants(variants.filter((_, i) => i !== idx))}
+                    className="text-red-600 hover:text-red-800 text-sm px-2"
+                  >
+                    Xóa
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
         <div className="flex gap-2 mt-6">
           <button onClick={submit} disabled={loading || uploading} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md font-medium disabled:opacity-50">
             {uploading ? 'Đang tải...' : (loading ? 'Đang lưu...' : 'Lưu')}
@@ -358,8 +514,8 @@ const ProductsAdmin: React.FC = () => {
   );
 };
 
-// --- Nâng cấp ProductCreateForm thành Modal ---
-const ProductCreateForm: React.FC<{ onCreate: (p: Partial<Product>) => void }> = ({ onCreate }) => {
+// --- ProductCreateForm Modal (giống modal sửa) ---
+const ProductCreateForm: React.FC<{ onCreate: (p: Partial<Product>) => Promise<any> }> = ({ onCreate }) => {
   const [open, setOpen] = useState(false)
   const [name, setName] = useState('');
   const [price, setPrice] = useState('');
@@ -367,9 +523,24 @@ const ProductCreateForm: React.FC<{ onCreate: (p: Partial<Product>) => void }> =
   const [image, setImage] = useState('');
   const [file, setFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
-  
-  // Logic submit được giữ nguyên: gọi onCreate và reset form
-  // Ta chỉ thêm validation cơ bản cho nhất quán với form Sửa
+  const [categoryId, setCategoryId] = useState<number | null>(null);
+  const [categories, setCategories] = useState<{id: number; name: string; slug: string}[]>([]);
+  const [variants, setVariants] = useState<Variant[]>([]);
+  const variantsContainerRef = React.useRef<HTMLDivElement | null>(null);
+
+  useEffect(() => {
+    if (!open) return;
+    // Load categories when modal opens
+    (async () => {
+      try {
+        const { data } = await supabase.from('categories').select('id, name, slug').order('name');
+        setCategories(data || []);
+      } catch (e) {
+        console.error('Failed to load categories', e);
+      }
+    })();
+  }, [open]);
+
   const submit = async () => {
     if (!name.trim()) return alert('Tên sản phẩm là bắt buộc');
     const parsedPrice = price ? (isNaN(Number(String(price).replace(/[^\d.-]/g, '')) ) ? null : Number(String(price).replace(/[^\d.-]/g, '')) ) : undefined;
@@ -379,13 +550,11 @@ const ProductCreateForm: React.FC<{ onCreate: (p: Partial<Product>) => void }> =
       let imageUrl = image;
       if (file) {
         setUploading(true);
-        // upload via backend to use service_role key and bypass RLS/storage policies
         const b64 = await fileToBase64(file);
         const resp = await fetch(`${backendUrl}/admin/upload-image`, { method: 'POST', headers: headersWithKey(), body: JSON.stringify({ fileName: file.name, fileBase64: b64 }) });
         const respBody = await resp.json().catch(() => ({}));
         if (!resp.ok) {
           if (resp.status === 413) {
-            // binary fallback
             const ab = await file.arrayBuffer();
             const binResp = await fetch(`${backendUrl}/admin/upload-image?fileName=${encodeURIComponent(file.name)}`, { method: 'POST', headers: { ...(adminApiKey ? { 'x-admin-api-key': adminApiKey } : {}), 'Content-Type': 'application/octet-stream', 'x-file-name': file.name }, body: ab });
             const binBody = await binResp.json().catch(() => ({}));
@@ -398,24 +567,42 @@ const ProductCreateForm: React.FC<{ onCreate: (p: Partial<Product>) => void }> =
           imageUrl = respBody.publicUrl || imageUrl;
         }
       }
-  await onCreate({ name: name.trim(), price: parsedPrice ?? price, image: imageUrl, label: label ? label.trim() : '' });
-      setName('');
-      setPrice('');
-      setImage('');
-      setFile(null);
+
+      const payload: any = { name: name.trim(), price: parsedPrice ?? price, image: imageUrl, label: label ? label.trim() : '' };
+      if (categoryId) payload.category_id = categoryId;
+      
+      const created = await onCreate(payload);
+
+      // Save variants if any
+      if (created && created.id && variants.length > 0) {
+        try {
+          const variantsResp = await fetch(`${backendUrl}/admin/products/${created.id}/variants`, {
+            method: 'POST',
+            headers: headersWithKey(),
+            body: JSON.stringify({ variants }),
+          });
+          if (!variantsResp.ok) {
+            const errBody = await variantsResp.json().catch(() => ({}));
+            console.warn('Failed to save variants:', errBody);
+          }
+        } catch (varErr) {
+          console.warn('Save variants error:', varErr);
+        }
+      }
+
+      // Reset form
+      setName(''); setPrice(''); setLabel(''); setImage(''); setFile(null); setCategoryId(null); setVariants([]);
       setOpen(false);
     } catch (e: any) {
       console.error('createProduct upload', e);
       const errMsg = e?.message || String(e);
       if (errMsg.toLowerCase().includes('bucket not found')) {
-        // Inform user but fallback to create product without image so admin can continue
         alert(`Upload ảnh thất bại: bucket "${PRODUCT_BUCKET}" không tồn tại. Tạo sản phẩm không có ảnh (fallback). Vui lòng tạo bucket trên Supabase Storage để bật upload.`);
         try {
-          await onCreate({ name: name.trim(), price: parsedPrice ?? price, image: '', label: label ? label.trim() : '' });
-          setName('');
-          setPrice('');
-          setImage('');
-          setFile(null);
+          const payload: any = { name: name.trim(), price: parsedPrice ?? price, image: '', label: label ? label.trim() : '' };
+          if (categoryId) payload.category_id = categoryId;
+          await onCreate(payload);
+          setName(''); setPrice(''); setLabel(''); setImage(''); setFile(null); setCategoryId(null); setVariants([]);
           setOpen(false);
         } catch (innerErr: any) {
           console.error('create fallback failed', innerErr);
@@ -433,10 +620,9 @@ const ProductCreateForm: React.FC<{ onCreate: (p: Partial<Product>) => void }> =
         Tạo sản phẩm
       </button>
       
-      {/* Thay vì dropdown, ta render Modal */}
       {open && (
         <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50">
-          <div className="bg-white p-6 rounded-lg shadow-lg w-full max-w-md">
+          <div className="bg-white p-6 rounded-lg shadow-lg w-full max-w-md max-h-[90vh] overflow-y-auto">
             <h3 className="text-lg font-bold mb-4">Tạo sản phẩm mới</h3>
             <div className="mb-3">
               <label className="block text-sm font-medium mb-1 text-gray-700">Tên</label>
@@ -448,7 +634,16 @@ const ProductCreateForm: React.FC<{ onCreate: (p: Partial<Product>) => void }> =
             </div>
             <div className="mb-3">
               <label className="block text-sm font-medium mb-1 text-gray-700">Nhãn</label>
-              <input value={label} onChange={e => setLabel(e.target.value)} className="border-gray-300 border rounded px-3 py-2 w-full focus:ring-indigo-500 focus:border-indigo-500" />
+              <input value={label} onChange={e => setLabel(e.target.value)} className="border-gray-300 border rounded px-3 py-2 w-full focus:ring-indigo-500 focus:border-indigo-500" placeholder="HOT, NEW, SALE..." />
+            </div>
+            <div className="mb-3">
+              <label className="block text-sm font-medium mb-1 text-gray-700">Danh mục</label>
+              <select value={categoryId || ''} onChange={e => setCategoryId(e.target.value ? Number(e.target.value) : null)} className="border-gray-300 border rounded px-3 py-2 w-full focus:ring-indigo-500 focus:border-indigo-500">
+                <option value="">-- Chọn danh mục --</option>
+                {categories.map(cat => (
+                  <option key={cat.id} value={cat.id}>{cat.name}</option>
+                ))}
+              </select>
             </div>
             <div className="mb-3">
               <label className="block text-sm font-medium mb-1 text-gray-700">URL ảnh</label>
@@ -460,9 +655,97 @@ const ProductCreateForm: React.FC<{ onCreate: (p: Partial<Product>) => void }> =
                 </div>
               )}
             </div>
+
+            {/* Variants Section */}
+            <div className="mb-3 border-t pt-3">
+              <div className="flex justify-between items-center mb-2">
+                <label className="block text-sm font-medium text-gray-700">Variants (Size/Stock/Price)</label>
+                <div className="flex items-center gap-2">
+                  <button 
+                    type="button"
+                    onClick={() => {
+                      setVariants(prev => {
+                        const next = [...prev, { size: '', stock: 0, price_vnd: 0 }];
+                        setTimeout(() => {
+                          if (variantsContainerRef.current) {
+                            variantsContainerRef.current.scrollTo({ top: variantsContainerRef.current.scrollHeight, behavior: 'smooth' });
+                          }
+                        }, 50);
+                        return next;
+                      });
+                    }}
+                    className="text-sm px-2 py-1 bg-green-500 text-white rounded hover:bg-green-600"
+                  >
+                    + Thêm
+                  </button>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      if (variantsContainerRef.current) {
+                        variantsContainerRef.current.scrollTo({ top: variantsContainerRef.current.scrollHeight, behavior: 'smooth' });
+                      }
+                    }}
+                    className="text-sm px-2 py-1 bg-gray-200 text-gray-800 rounded hover:bg-gray-300"
+                  >
+                    Cuộn xuống
+                  </button>
+                </div>
+              </div>
+              {variants.length === 0 ? (
+                <p className="text-sm text-gray-500">Chưa có variant nào</p>
+              ) : (
+                <div ref={variantsContainerRef} className="space-y-2 max-h-56 overflow-auto pr-2">
+                  {variants.map((v, idx) => (
+                    <div key={idx} className="flex gap-2 items-center">
+                      <input 
+                        placeholder="Size" 
+                        value={v.size} 
+                        onChange={e => {
+                          const updated = [...variants];
+                          updated[idx].size = e.target.value;
+                          setVariants(updated);
+                        }}
+                        className="border rounded px-2 py-1 w-20 text-sm"
+                      />
+                      <input 
+                        type="number" 
+                        placeholder="Stock" 
+                        value={v.stock} 
+                        onChange={e => {
+                          const updated = [...variants];
+                          updated[idx].stock = Number(e.target.value);
+                          setVariants(updated);
+                        }}
+                        className="border rounded px-2 py-1 w-24 text-sm"
+                      />
+                      <input 
+                        type="number" 
+                        placeholder="Price" 
+                        value={v.price_vnd} 
+                        onChange={e => {
+                          const updated = [...variants];
+                          updated[idx].price_vnd = Number(e.target.value);
+                          setVariants(updated);
+                        }}
+                        className="border rounded px-2 py-1 flex-1 text-sm"
+                      />
+                      <button 
+                        type="button"
+                        onClick={() => setVariants(variants.filter((_, i) => i !== idx))}
+                        className="text-red-600 hover:text-red-800 text-sm px-2"
+                      >
+                        Xóa
+                      </button>
+                    </div>
+                  ))}
+                </div>
+              )}
+            </div>
+
             <div className="flex gap-2 mt-6">
-              {/* Nút này không có loading state, vì logic gốc không hỗ trợ */}
-              <button onClick={submit} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md font-medium">{uploading ? 'Đang tải...' : 'Tạo'}</button>
+              <button onClick={submit} disabled={uploading} className="px-4 py-2 bg-blue-600 hover:bg-blue-700 text-white rounded-md font-medium disabled:opacity-50">
+                {uploading ? 'Đang tải...' : 'Tạo'}
+              </button>
               <button onClick={() => setOpen(false)} className="px-4 py-2 bg-gray-200 hover:bg-gray-300 text-gray-800 rounded-md font-medium">Hủy</button>
             </div>
           </div>
