@@ -78,41 +78,87 @@ const ProductReviews: React.FC<Props> = ({ productId }) => {
     if (!user) return alert('Vui lòng đăng nhập để gửi đánh giá');
     if (!newContent.trim()) return alert('Vui lòng nhập nhận xét');
 
+    // Verify user has purchased this product before allowing review
+    try {
+      const { data: ordersData, error: ordersError } = await supabase
+        .from('orders')
+        .select('id,status,order_items(product_id),payments(status)')
+        .eq('user_id', user.id)
+        .limit(200);
+
+      if (ordersError) {
+        console.error('[ProductReviews] orders lookup failed', ordersError);
+        alert('Không thể xác minh đơn hàng của bạn vào lúc này. Vui lòng thử lại sau.');
+        return;
+      }
+
+      const ordersList = ordersData || [];
+      const hasPurchased = ordersList.some((o: any) => {
+        const items = o.order_items || [];
+        const includesProduct = items.some((it: any) => Number(it.product_id) === Number(productId));
+        const paidStatus = (o.status && String(o.status).toLowerCase() === 'paid') || (o.payments || []).some((p: any) => String(p.status).toLowerCase() === 'success' || String(p.status).toLowerCase() === 'completed');
+        return includesProduct && paidStatus;
+      });
+
+      if (!hasPurchased) {
+        alert('Bạn chỉ có thể đánh giá sản phẩm sau khi đã mua nó.');
+        return;
+      }
+    } catch (checkErr) {
+      console.error('[ProductReviews] verify purchase error', checkErr);
+      alert('Không thể xác minh quyền đánh giá do lỗi. Vui lòng thử lại sau.');
+      return;
+    }
+
     setSubmitting(true);
     try {
+      // call backend endpoint which enforces purchase verification server-side
+      const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:54321';
+      // fetch session to get access token
+      const { data: sessionData } = await supabase.auth.getSession();
+      const accessToken = sessionData?.session?.access_token || '';
+
       const payload: any = {
         product_id: productId,
-        user_id: user.id,
         rating: newRating,
         title: newTitle || null,
         content: newContent,
       };
 
-      const { data: inserted, error } = await supabase.from('product_reviews').insert(payload).select();
-      if (error) {
-        console.error('[ProductReviews] insert error', error);
-        throw error;
+      const resp = await fetch(`${backendUrl.replace(/\/$/, '')}/reviews`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          ...(accessToken ? { Authorization: `Bearer ${accessToken}` } : {}),
+        },
+        body: JSON.stringify(payload),
+      });
+
+      if (!resp.ok) {
+        const text = await resp.text().catch(() => '');
+        console.error('[ProductReviews] backend /reviews failed', resp.status, text);
+        const body = await resp.json().catch(() => null);
+        throw new Error((body && body.error) ? body.error : `Server returned ${resp.status}`);
       }
 
-      if (inserted && inserted[0]) {
-        const first = inserted[0] as Review;
-        const authorName = user.user_metadata?.full_name || user.email || null;
-        // Ensure the profiles table has this user's name so it persists after reload.
-        try {
-          await supabase.from('profiles').upsert({
-            id: user.id,
-            full_name: authorName,
-            email: user.email || null,
-            updated_at: new Date().toISOString(),
-          });
-        } catch (pe) {
-          // ignore profile upsert failures (RLS/missing table) but log for debugging
-          console.warn('[ProductReviews] profiles upsert failed', pe);
-        }
+      const body = await resp.json();
+      const inserted = body?.data || null;
+      if (!inserted) throw new Error('No inserted review returned from server');
 
-        setReviews((prev) => [{ ...first, author_name: authorName }, ...prev]);
+      const authorName = user.user_metadata?.full_name || user.email || null;
+      // best-effort: ensure the profiles table has this user's name
+      try {
+        await supabase.from('profiles').upsert({
+          id: user.id,
+          full_name: authorName,
+          email: user.email || null,
+          updated_at: new Date().toISOString(),
+        });
+      } catch (pe) {
+        console.warn('[ProductReviews] profiles upsert failed', pe);
       }
 
+      setReviews((prev) => [{ ...inserted, author_name: authorName }, ...prev]);
       setNewContent('');
       setNewTitle('');
       setNewRating(5);

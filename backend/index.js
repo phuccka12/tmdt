@@ -39,6 +39,96 @@ app.use(express.json({ limit: '30mb' }));
 // Also accept URL-encoded bodies up to same limit
 app.use(express.urlencoded({ limit: '30mb', extended: true }));
 
+// Public: submit a product review (server-side enforcement that user purchased product)
+// The client must forward the user's access token in the Authorization header: `Authorization: Bearer <access_token>`
+app.post('/reviews', express.json(), async (req, res) => {
+  try {
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.split(' ')[1];
+    if (!token) return res.status(401).json({ error: 'Authorization required' });
+
+    // Resolve fetch implementation (node 18 has global fetch, otherwise use fetchFn if available)
+    const fetchImpl = (typeof fetch === 'function') ? fetch : (typeof fetchFn === 'function' ? fetchFn : null);
+    if (!fetchImpl) {
+      console.error('[backend] no fetch implementation available to validate user token');
+      return res.status(500).json({ error: 'Server missing fetch implementation' });
+    }
+
+    // Get user info from Supabase auth endpoint using the provided access token
+    const authUrl = (SUPABASE_URL || '').replace(/\/$/, '') + '/auth/v1/user';
+    const userResp = await fetchImpl(authUrl, {
+      method: 'GET',
+      headers: {
+        Authorization: `Bearer ${token}`,
+        apikey: SUPABASE_SERVICE_ROLE_KEY || '',
+      },
+    });
+
+    if (!userResp.ok) {
+      const text = await userResp.text().catch(() => '');
+      console.warn('[backend] token validation failed', userResp.status, text);
+      return res.status(401).json({ error: 'Invalid or expired session token' });
+    }
+
+    const userJson = await userResp.json();
+    // auth/v1/user may return { id, … } or { user: { id, ... } } depending on endpoint; handle both
+    const userId = (userJson && (userJson.id || (userJson.user && userJson.user.id))) || null;
+    if (!userId) return res.status(401).json({ error: 'Unable to determine user from token' });
+
+    const { product_id, rating, title, content } = req.body || {};
+    if (!product_id || !rating) return res.status(400).json({ error: 'product_id and rating required' });
+
+    // Check whether this user has a PAID order containing this product
+    const { data: ordersData, error: ordersError } = await supabase
+      .from('orders')
+      .select('id,status,order_items(product_id),payments(status)')
+      .eq('user_id', userId)
+      .limit(200);
+
+    if (ordersError) {
+      console.error('[backend] orders lookup failed for user', userId, ordersError);
+      return res.status(500).json({ error: 'Failed to verify orders for user' });
+    }
+
+    const orders = ordersData || [];
+    const hasPurchased = orders.some((o) => {
+      const items = o.order_items || [];
+      const includesProduct = items.some((it) => Number(it.product_id) === Number(product_id));
+      const paidStatus = (o.status && String(o.status).toLowerCase() === 'paid') || (o.payments || []).some((p) => {
+        const s = String(p.status || '').toLowerCase();
+        return s === 'success' || s === 'completed' || s === 'paid';
+      });
+      return includesProduct && paidStatus;
+    });
+
+    if (!hasPurchased) {
+      return res.status(403).json({ error: 'User has not purchased this product' });
+    }
+
+    // Insert review using service role key (server-side safe)
+    const insertPayload = {
+      product_id: product_id,
+      user_id: userId,
+      rating: rating,
+      title: title || null,
+      content: content || null,
+      created_at: new Date().toISOString(),
+    };
+
+    const { data: inserted, error: insertErr } = await supabase.from('product_reviews').insert(insertPayload).select();
+    if (insertErr) {
+      console.error('[backend] failed to insert product_review', insertErr);
+      // If schema missing 'approved' or other columns, surface a helpful message
+      return res.status(500).json({ error: insertErr.message || insertErr });
+    }
+
+    return res.json({ data: Array.isArray(inserted) ? inserted[0] : inserted });
+  } catch (err) {
+    console.error('[backend] /reviews error', err);
+    return res.status(500).json({ error: err && err.message ? err.message : String(err) });
+  }
+});
+
 // Mount payment routes
 try {
   const paymentsRouter = require('./routes/payments');
