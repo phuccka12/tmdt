@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { Link } from 'react-router-dom';
 import { User, ShoppingCart, Heart, Menu, Search, X } from 'lucide-react';
 import { supabase } from '../supabaseClient';
@@ -12,6 +12,18 @@ interface HeaderProps {
 const Header: React.FC<HeaderProps> = ({ cartCount, user }) => {
   const [menuOpen, setMenuOpen] = useState(false);
   const [isAdmin, setIsAdmin] = useState(false);
+  const [query, setQuery] = useState('');
+  const [suggestions, setSuggestions] = useState<any[]>([]);
+  const [searchLoading, setSearchLoading] = useState(false);
+  const [showSuggestions, setShowSuggestions] = useState(false);
+  const searchTimer = useRef<any>(null);
+
+  // cleanup timer on unmount
+  useEffect(() => {
+    return () => {
+      if (searchTimer.current) clearTimeout(searchTimer.current);
+    };
+  }, []);
 
   useEffect(() => {
     let mounted = true;
@@ -62,12 +74,71 @@ const Header: React.FC<HeaderProps> = ({ cartCount, user }) => {
             <div className="w-full relative">
               <input
                 type="text"
+                value={query}
+                onChange={(e) => {
+                  const v = e.target.value;
+                  setQuery(v);
+                  setShowSuggestions(!!v);
+                  if (searchTimer.current) clearTimeout(searchTimer.current);
+                  // debounce
+                  searchTimer.current = setTimeout(async () => {
+                    if (!v) {
+                      setSuggestions([]);
+                      setSearchLoading(false);
+                      return;
+                    }
+                    setSearchLoading(true);
+                    try {
+                      // simple ilike search on product name (case-insensitive)
+                      const { data, error } = await supabase
+                        .from('products')
+                        .select('id, name, image, price')
+                        .ilike('name', `%${v}%`)
+                        .limit(6);
+                      if (error) throw error;
+                      setSuggestions(data || []);
+                    } catch (err) {
+                      console.error('search error', err);
+                      setSuggestions([]);
+                    } finally {
+                      setSearchLoading(false);
+                    }
+                  }, 300);
+                }}
+                onFocus={() => setShowSuggestions(!!query)}
+                onBlur={() => setTimeout(() => setShowSuggestions(false), 150)}
                 placeholder="Tìm kiếm sản phẩm..."
                 className="w-full border-2 border-gray-300 rounded-full px-6 py-2.5 pr-12 focus:border-orange-500 outline-none"
               />
               <button className="absolute right-2 top-1/2 -translate-y-1/2 bg-orange-500 text-white p-2 rounded-full hover:bg-orange-600 transition">
                 <Search className="w-5 h-5" />
               </button>
+
+              {/* Suggestions dropdown */}
+              {showSuggestions && (
+                // raise z-index above NavBar so dropdown isn't covered
+                <div className="absolute left-0 right-0 mt-2 bg-white border rounded-lg shadow-lg z-[9999] overflow-hidden">
+                  {searchLoading ? (
+                    <div className="p-3 text-center text-gray-500">Đang tìm...</div>
+                  ) : suggestions.length === 0 ? (
+                    <div className="p-3 text-gray-500">Không tìm thấy sản phẩm</div>
+                  ) : (
+                    <ul>
+                      {suggestions.map((s) => (
+                        <li key={s.id} className="px-3 py-2 hover:bg-gray-50">
+                          <Link to={`/product/${s.id}`} className="flex items-center gap-3" onClick={() => setShowSuggestions(false)}>
+                            <img src={s.image} alt={s.name} className="w-10 h-10 object-cover rounded" />
+                            <div className="truncate">
+                              <div className="text-sm font-medium text-gray-800">{s.name}</div>
+                              <div className="text-xs text-gray-500">{s.price}</div>
+                            </div>
+                          </Link>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </div>
+              )}
             </div>
           </div>
 

@@ -6,6 +6,13 @@ const path = require('path');
 
 dotenv.config({ path: path.resolve(__dirname, '.env') });
 const { createClient } = require('@supabase/supabase-js');
+// Global error handlers to surface uncaught exceptions and unhandled promise rejections
+process.on('uncaughtException', (err) => {
+  console.error('[backend] Uncaught Exception:', err && err.stack ? err.stack : err);
+});
+process.on('unhandledRejection', (reason, p) => {
+  console.error('[backend] Unhandled Rejection at:', p, 'reason:', reason && reason.stack ? reason.stack : reason);
+});
 try {
   if (!fetchFn) fetchFn = require('node-fetch');
 } catch (e) {
@@ -290,6 +297,95 @@ app.delete('/admin/products/:id', requireAdminApiKey, async (req, res) => {
     const { error } = await supabase.from('products').delete().eq('id', id);
     if (error) return res.status(500).json({ error: error.message || error });
     return res.json({ ok: true });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || err });
+  }
+});
+
+// Admin: list orders 
+app.get('/admin/orders', requireAdminApiKey, async (req, res) => {
+  try {
+    const limit = Number(req.query.limit) || 100;
+
+    // Fetch orders and order_items first. Some schemas may not have a DB-level relationship
+    // between orders and profiles that Supabase can use in a single select; fetch profiles separately.
+    const { data: ordersData, error: ordersError } = await supabase
+      .from('orders')
+      .select('id, total, status, created_at, user_id, order_items(id, product_id, quantity, unit_price)')
+      .order('created_at', { ascending: false })
+      .limit(limit);
+
+    if (ordersError) return res.status(500).json({ error: ordersError.message || ordersError });
+
+    const orders = ordersData || [];
+
+    // Collect user ids and fetch profiles in one query
+    const userIds = Array.from(new Set(orders.map(o => o.user_id).filter(Boolean)));
+    let profilesMap = {};
+    if (userIds.length > 0) {
+      const { data: profiles, error: profilesError } = await supabase.from('profiles').select('id, full_name, email').in('id', userIds);
+      if (!profilesError && Array.isArray(profiles)) {
+        profilesMap = profiles.reduce((m, p) => { m[p.id] = p; return m; }, {});
+      }
+    }
+
+    // Attach profile object to each order for convenience
+    const result = orders.map(o => ({ ...o, profile: (o.user_id ? profilesMap[o.user_id] : null) || null }));
+
+    return res.json({ data: result });
+  } catch (err) {
+    return res.status(500).json({ error: err.message || err });
+  }
+});
+
+// Admin: update order 
+app.put('/admin/orders/:id', requireAdminApiKey, express.json(), async (req, res) => {
+  try {
+    const id = req.params.id;
+    if (!id) return res.status(400).json({ error: 'invalid id' });
+    const payload = req.body || {};
+    // only allow updating a subset of fields
+    const allowed = ['status', 'processing_error', 'processed'];
+    const toUpdate = {};
+    // If the client sent `processed` but the DB doesn't have that column, avoid trying to update it
+    const wantsProcessed = Object.prototype.hasOwnProperty.call(payload, 'processed');
+
+    // helper: check whether a column exists by attempting a select of that column
+    const columnExists = async (table, column) => {
+      try {
+        const { data, error } = await supabase.from(table).select(column).limit(1);
+        if (error) return false;
+        return true;
+      } catch (e) {
+        return false;
+      }
+    };
+
+    // build toUpdate but skip processed until we confirm it exists
+    for (const k of allowed) {
+      if (k === 'processed') continue; // handled below
+      if (k in payload) toUpdate[k] = payload[k];
+    }
+
+    if (wantsProcessed) {
+      const exists = await columnExists('orders', 'processed');
+      if (exists) {
+        toUpdate.processed = payload.processed;
+      } else {
+        // If the only provided updatable field is `processed` and it's missing in DB, return a clear error
+        if (Object.keys(toUpdate).length === 0) {
+          return res.status(400).json({ error: "Server database schema missing 'processed' column on orders. Run migrations or remove the 'processed' field from the request." });
+        }
+        // otherwise, ignore processed silently (we still update other fields)
+        console.warn('[backend] client asked to update `processed` but orders.processed column not found in DB; skipping that field');
+      }
+    }
+
+    if (Object.keys(toUpdate).length === 0) return res.status(400).json({ error: 'no updatable fields provided' });
+
+    const { data, error } = await supabase.from('orders').update(toUpdate).eq('id', id).select();
+    if (error) return res.status(500).json({ error: error.message || error });
+    return res.json({ data });
   } catch (err) {
     return res.status(500).json({ error: err.message || err });
   }

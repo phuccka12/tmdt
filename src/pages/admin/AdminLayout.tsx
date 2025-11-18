@@ -6,11 +6,13 @@ import AccountsAdmin from './AccountsAdmin';
 import ProductsAdmin from './ProductsAdmin';
 import ReportsAdmin from './ReportsAdmin';
 
+// Lazy load orders and webhooks admin pages
+const OrdersAdmin = lazy(() => import('./OrdersAdmin'));
 // Lazy load WebhooksAdmin to avoid circular import issues
 const WebhooksAdmin = lazy(() => import('./WebhooksAdmin'));
 
 const AdminLayout: React.FC = () => {
-  const [tab, setTab] = useState<'overview' | 'accounts' | 'products' | 'reports' | 'webhooks'>('overview');
+  const [tab, setTab] = useState<'overview' | 'accounts' | 'products' | 'reports' | 'webhooks' | 'orders'>('overview');
   const adminApiKey = import.meta.env.VITE_ADMIN_API_KEY || '';
 
   const TabButton: React.FC<{ active: boolean; onClick: () => void; children: React.ReactNode }> = ({ active, onClick, children }) => (
@@ -50,6 +52,7 @@ const AdminLayout: React.FC = () => {
             <TabButton active={tab === 'products'} onClick={() => setTab('products')}>Sản phẩm</TabButton>
             <TabButton active={tab === 'reports'} onClick={() => setTab('reports')}>Báo cáo</TabButton>
             <TabButton active={tab === 'webhooks'} onClick={() => setTab('webhooks')}>Webhooks</TabButton>
+            <TabButton active={tab === 'orders'} onClick={() => setTab('orders')}>Đơn hàng</TabButton>
           </div>
         </div>
 
@@ -60,6 +63,11 @@ const AdminLayout: React.FC = () => {
             {tab === 'accounts' && <AccountsAdmin />}
             {tab === 'products' && <ProductsAdmin />}
             {tab === 'reports' && <ReportsAdmin />}
+            {tab === 'orders' && (
+              <Suspense fallback={<div className="text-center py-8">Loading...</div>}>
+                <OrdersAdmin />
+              </Suspense>
+            )}
             {tab === 'webhooks' && (
               <Suspense fallback={<div className="text-center py-8">Loading...</div>}>
                 <WebhooksAdmin />
