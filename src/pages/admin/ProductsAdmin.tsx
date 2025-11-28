@@ -438,8 +438,6 @@ const ProductsAdmin: React.FC = () => {
       <h2 className="text-2xl font-bold mb-6 text-gray-800">Quản lý Sản phẩm</h2>
       <div className="mb-6 flex flex-col md:flex-row items-center justify-between gap-4">
         <input value={prodSearch} onChange={e => setProdSearch(e.target.value)} placeholder="Tìm sản phẩm theo tên hoặc ID..." className="border border-gray-300 rounded-md px-3 py-2 w-full md:max-w-md focus:ring-indigo-500 focus:border-indigo-500" />
-        {/* `creating` state được truyền vào để form con có thể hiển thị loading (nếu muốn) */}
-        {/* Trong code gốc, logic `creating` không được dùng ở form, ta giữ nguyên logic đó */}
         <ProductCreateForm onCreate={createProduct} />
       </div>
 

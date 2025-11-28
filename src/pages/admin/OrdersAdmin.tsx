@@ -128,7 +128,7 @@ const OrdersAdmin: React.FC = () => {
                   <td className="p-3 text-right">{o.total ? Number(o.total).toLocaleString('vi-VN') + '₫' : '—'}</td>
                   <td className="p-3">{o.created_at ? new Date(o.created_at).toLocaleString() : '—'}</td>
                   <td className="p-3">
-                    <div className="flex items-center gap-2">
+                    <div className="flex items-center gap-2 flex-wrap">
                       <button
                         onClick={() => updateOrder(o.id, { status: o.status })}
                         disabled={savingId === o.id}
@@ -143,6 +143,20 @@ const OrdersAdmin: React.FC = () => {
                       >
                         {o.processed ? 'Đã xử lý' : 'Đánh dấu đã xử lý'}
                       </button>
+                      {/* COD delivery confirmation button - marks order as paid */}
+                      {o.status === 'pending' && (
+                        <button
+                          onClick={() => {
+                            if (confirm('Xác nhận đã giao hàng và thu tiền COD?')) {
+                              updateOrder(o.id, { status: 'paid', processed: true });
+                            }
+                          }}
+                          disabled={savingId === o.id}
+                          className="inline-flex items-center gap-2 px-3 py-1 bg-green-600 text-white rounded disabled:opacity-60 text-sm"
+                        >
+                          ✓ Giao hàng COD
+                        </button>
+                      )}
                       <button
                         onClick={() => setSelectedOrder(o)}
                         className="text-gray-500 hover:text-gray-700 inline-flex items-center gap-2"

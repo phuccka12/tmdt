@@ -184,11 +184,7 @@ const Header: React.FC<HeaderProps> = ({ cartCount, user }) => {
             </button>
           </div>
         </div>
-
-        {/* Navigation Bar */}
-        <NavBar />  {/* Render NavBar here */}
-
-        {/* Mobile Menu */}
+        <NavBar />  
         {menuOpen && (
           <div className="lg:hidden py-4 space-y-3 border-t z-[9999] relative">
             <Link to="/" className="block py-2 font-bold hover:text-orange-500 transition uppercase">Trang chủ</Link>

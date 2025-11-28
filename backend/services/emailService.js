@@ -1,14 +1,11 @@
 const nodemailer = require('nodemailer');
-
-// Create transporter (sử dụng Gmail hoặc SMTP service khác)
-// Để dùng Gmail: cần bật "Less secure app access" hoặc dùng App Password
 const transporter = nodemailer.createTransport({
   host: process.env.SMTP_HOST || 'smtp.gmail.com',
   port: process.env.SMTP_PORT || 587,
-  secure: false, // true for 465, false for other ports
+  secure: false, 
   auth: {
-    user: process.env.SMTP_USER, // your email
-    pass: process.env.SMTP_PASS, // your password or app password
+    user: process.env.SMTP_USER, 
+    pass: process.env.SMTP_PASS, 
   },
 });
 

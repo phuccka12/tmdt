@@ -8,36 +8,75 @@ export default function OrdersPage() {
   const navigate = useNavigate();
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
+  const [cancelling, setCancelling] = useState<number | null>(null);
+
+  const fetchOrders = async () => {
+    setLoading(true);
+    try {
+      const { data: userRes } = await supabase.auth.getUser();
+      const user = userRes?.user;
+      if (!user) {
+        navigate('/auth?redirect=/orders');
+        return;
+      }
+
+      // Fetch orders and nested order_items with product info
+      const { data, error } = await supabase
+        .from('orders')
+        .select(`id, total, status, address, phone, created_at, processed, cancelled_at, order_items(id, quantity, unit_price, product:products(id, name, image)), payments(id, provider, amount, status, created_at)`)
+        .eq('user_id', user.id)
+        .order('created_at', { ascending: false });
+
+      if (error) {
+        console.error('Failed to fetch orders', error);
+      } else {
+        setOrders(data || []);
+      }
+    } catch (e) {
+      console.error('orders page error', e);
+    } finally {
+      setLoading(false);
+    }
+  };
+
+  const handleCancelOrder = async (orderId: number) => {
+    if (!confirm('Bạn có chắc muốn hủy đơn hàng này?')) return;
+    setCancelling(orderId);
+    try {
+      const { data: { session } } = await supabase.auth.getSession();
+      if (!session) {
+        alert('Vui lòng đăng nhập lại');
+        return;
+      }
+
+      const backend = import.meta.env.VITE_BACKEND_URL || 'http://localhost:54321';
+      const resp = await fetch(`${backend}/orders/${orderId}/cancel`, {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+          'Authorization': `Bearer ${session.access_token}`,
+        },
+        body: JSON.stringify({ reason: 'Khách hàng yêu cầu hủy' }),
+      });
+
+      const body = await resp.json();
+      if (!resp.ok) {
+        alert('Hủy đơn thất bại: ' + (body.error || body.reason || 'Unknown error'));
+        return;
+      }
+
+      alert('Đã hủy đơn hàng thành công');
+      fetchOrders();
+    } catch (e: any) {
+      console.error('Cancel order error', e);
+      alert('Lỗi: ' + (e?.message || String(e)));
+    } finally {
+      setCancelling(null);
+    }
+  };
 
   useEffect(() => {
-    (async () => {
-      setLoading(true);
-      try {
-        const { data: userRes } = await supabase.auth.getUser();
-        const user = userRes?.user;
-        if (!user) {
-          navigate('/auth?redirect=/orders');
-          return;
-        }
-
-        // Fetch orders and nested order_items with product info
-        const { data, error } = await supabase
-          .from('orders')
-          .select(`id, total, status, address, phone, created_at, order_items(id, quantity, unit_price, product:products(id, name, image)), payments(id, provider, amount, status, created_at)`)
-          .eq('user_id', user.id)
-          .order('created_at', { ascending: false });
-
-        if (error) {
-          console.error('Failed to fetch orders', error);
-        } else {
-          setOrders(data || []);
-        }
-      } catch (e) {
-        console.error('orders page error', e);
-      } finally {
-        setLoading(false);
-      }
-    })();
+    fetchOrders();
   }, []);
 
   return (
@@ -82,9 +121,21 @@ export default function OrdersPage() {
                   <div className="text-xl font-black mb-3">{formatVnd(Number(o.total || 0))}</div>
                   <div className="text-sm text-gray-600 mb-2">Địa chỉ</div>
                   <div className="text-sm mb-3">{o.address || '—'} • {o.phone || ''}</div>
-                  <div className="flex gap-2">
-                    <button onClick={() => navigate(`/orders/${o.id}`, { state: { order: o } })} className="px-3 py-2 rounded bg-black text-white text-sm">Chi tiết</button>
-                    <button onClick={() => alert('Chức năng theo dõi/đổi trả chưa triển khai')} className="px-3 py-2 rounded border text-sm">Hỗ trợ</button>
+                  <div className="flex flex-col gap-2">
+                    <div className="flex gap-2">
+                      <button onClick={() => navigate(`/orders/${o.id}`, { state: { order: o } })} className="px-3 py-2 rounded bg-black text-white text-sm">Chi tiết</button>
+                      <button onClick={() => alert('Chức năng theo dõi/đổi trả chưa triển khai')} className="px-3 py-2 rounded border text-sm">Hỗ trợ</button>
+                    </div>
+                    {/* Show cancel button only if order is cancelable (pending and not processed) */}
+                    {o.status === 'pending' && !o.processed && !o.cancelled_at && (
+                      <button
+                        onClick={() => handleCancelOrder(o.id)}
+                        disabled={cancelling === o.id}
+                        className="px-3 py-2 rounded bg-red-600 text-white text-sm hover:bg-red-700 disabled:opacity-50"
+                      >
+                        {cancelling === o.id ? 'Đang hủy...' : 'Hủy đơn'}
+                      </button>
+                    )}
                   </div>
                 </aside>
               </div>

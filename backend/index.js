@@ -71,7 +71,6 @@ app.post('/reviews', express.json(), async (req, res) => {
     }
 
     const userJson = await userResp.json();
-    // auth/v1/user may return { id, … } or { user: { id, ... } } depending on endpoint; handle both
     const userId = (userJson && (userJson.id || (userJson.user && userJson.user.id))) || null;
     if (!userId) return res.status(401).json({ error: 'Unable to determine user from token' });
 
@@ -395,10 +394,7 @@ app.delete('/admin/products/:id', requireAdminApiKey, async (req, res) => {
 // Admin: list orders 
 app.get('/admin/orders', requireAdminApiKey, async (req, res) => {
   try {
-    const limit = Number(req.query.limit) || 100;
-
-    // Fetch orders and order_items first. Some schemas may not have a DB-level relationship
-    // between orders and profiles that Supabase can use in a single select; fetch profiles separately.
+    const limit = Number(req.query.limit) || 100
     const { data: ordersData, error: ordersError } = await supabase
       .from('orders')
       .select('id, total, status, created_at, user_id, order_items(id, product_id, quantity, unit_price)')
@@ -478,6 +474,70 @@ app.put('/admin/orders/:id', requireAdminApiKey, express.json(), async (req, res
     return res.json({ data });
   } catch (err) {
     return res.status(500).json({ error: err.message || err });
+  }
+});
+
+// Allow order cancellation by owner (with Bearer token) or by admin (with admin API key)
+// POST /orders/:id/cancel
+app.post('/orders/:id/cancel', express.json(), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid id' });
+
+    const reason = req.body && req.body.reason ? String(req.body.reason).slice(0, 1000) : null;
+
+    // Determine caller: admin by admin key OR user via token
+    const key = req.headers['x-admin-api-key'] || req.query.admin_key;
+    let callerIsAdmin = false;
+    let callerUserId = null;
+    if (ADMIN_API_KEY && key && key === ADMIN_API_KEY) {
+      callerIsAdmin = true;
+    } else {
+      // validate bearer token
+      const authHeader = req.headers.authorization || '';
+      const token = (authHeader || '').split(' ')[1];
+      if (!token) return res.status(401).json({ error: 'Authorization required' });
+
+      const fetchImpl = (typeof fetch === 'function') ? fetch : (typeof fetchFn === 'function' ? fetchFn : null);
+      if (!fetchImpl) return res.status(500).json({ error: 'Server missing fetch implementation for token validation' });
+      const authUrl = (SUPABASE_URL || '').replace(/\/$/, '') + '/auth/v1/user';
+      const userResp = await fetchImpl(authUrl, { method: 'GET', headers: { Authorization: `Bearer ${token}`, apikey: SUPABASE_SERVICE_ROLE_KEY || '' } });
+      if (!userResp.ok) return res.status(401).json({ error: 'Invalid or expired token' });
+      const userJson = await userResp.json();
+      callerUserId = userJson.id || (userJson.user && userJson.user.id) || null;
+      if (!callerUserId) return res.status(401).json({ error: 'Unable to determine user from token' });
+    }
+
+    // load order
+    const { data: orderData, error: orderErr } = await supabase.from('orders').select('*').eq('id', id).limit(1).single();
+    if (orderErr || !orderData) return res.status(404).json({ error: 'Order not found' });
+    const order = orderData;
+
+    // permission: owner or admin
+    if (!callerIsAdmin && String(order.user_id) !== String(callerUserId)) {
+      return res.status(403).json({ error: 'Not authorized to cancel this order' });
+    }
+
+    // Check cancelable state
+    const status = String(order.status || '').toLowerCase();
+    const nonCancelable = ['paid', 'confirmed', 'shipped', 'cancelled'];
+    if (nonCancelable.includes(status)) {
+      return res.status(400).json({ error: 'Order cannot be cancelled at this stage' });
+    }
+    // Check processed flag if present
+    if (Object.prototype.hasOwnProperty.call(order, 'processed') && order.processed === true) {
+      return res.status(400).json({ error: 'Order already processed/approved; cannot cancel' });
+    }
+
+    const updatePayload = { status: 'cancelled', cancelled_at: new Date().toISOString(), cancel_reason: reason };
+    if (!callerIsAdmin) updatePayload.cancelled_by = callerUserId;
+
+    const { data: updated, error: updateErr } = await supabase.from('orders').update(updatePayload).eq('id', id).select();
+    if (updateErr) return res.status(500).json({ error: updateErr.message || updateErr });
+    return res.json({ data: updated });
+  } catch (e) {
+    console.error('[backend] /orders/:id/cancel error', e);
+    return res.status(500).json({ error: e && e.message ? e.message : String(e) });
   }
 });
 
@@ -682,6 +742,139 @@ app.get('/admin/reports/monthly', requireAdminApiKey, async (req, res) => {
     return res.json({ ok: true, period: { year, month }, totals, breakdown, ordersCount: orders.length });
   } catch (err) {
     return res.status(500).json({ error: err.message || err });
+  }
+});
+
+// ========== COUPONS ADMIN ENDPOINTS ==========
+
+// GET /admin/coupons - list all coupons
+app.get('/admin/coupons', requireAdminApiKey, async (req, res) => {
+  try {
+    const { data, error } = await supabase
+      .from('coupons')
+      .select('*')
+      .order('created_at', { ascending: false });
+
+    if (error) {
+      console.error('[backend] fetch coupons error', error);
+      return res.status(500).json({ error: 'Failed to fetch coupons' });
+    }
+
+    res.json({ coupons: data || [] });
+  } catch (e) {
+    console.error('[backend] GET /admin/coupons exception', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// POST /admin/coupons - create new coupon
+app.post('/admin/coupons', requireAdminApiKey, async (req, res) => {
+  try {
+    const { code, type, amount, usage_limit, starts_at, expires_at, active } = req.body;
+
+    if (!code || !type || amount === undefined) {
+      return res.status(400).json({ error: 'Missing required fields: code, type, amount' });
+    }
+
+    if (type !== 'fixed' && type !== 'percent') {
+      return res.status(400).json({ error: 'Invalid type: must be fixed or percent' });
+    }
+
+    if (amount <= 0) {
+      return res.status(400).json({ error: 'Amount must be greater than 0' });
+    }
+
+    // Check if code already exists
+    const { data: existing } = await supabase
+      .from('coupons')
+      .select('id')
+      .eq('code', code.toUpperCase())
+      .single();
+
+    if (existing) {
+      return res.status(400).json({ error: 'Coupon code already exists' });
+    }
+
+    const { data, error } = await supabase
+      .from('coupons')
+      .insert({
+        code: code.toUpperCase(),
+        type,
+        amount: parseFloat(amount),
+        usage_limit: usage_limit || null,
+        starts_at: starts_at || new Date().toISOString(),
+        expires_at: expires_at || null,
+        active: active !== undefined ? active : true,
+        used_count: 0,
+      })
+      .select()
+      .single();
+
+    if (error) {
+      console.error('[backend] create coupon error', error);
+      return res.status(500).json({ error: 'Failed to create coupon' });
+    }
+
+    res.json({ coupon: data });
+  } catch (e) {
+    console.error('[backend] POST /admin/coupons exception', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// PUT /admin/coupons/:id - update coupon
+app.put('/admin/coupons/:id', requireAdminApiKey, async (req, res) => {
+  try {
+    const { id } = req.params;
+    const { code, type, amount, usage_limit, starts_at, expires_at, active } = req.body;
+
+    const updates = {};
+    if (code !== undefined) updates.code = code.toUpperCase();
+    if (type !== undefined) updates.type = type;
+    if (amount !== undefined) updates.amount = parseFloat(amount);
+    if (usage_limit !== undefined) updates.usage_limit = usage_limit || null;
+    if (starts_at !== undefined) updates.starts_at = starts_at;
+    if (expires_at !== undefined) updates.expires_at = expires_at || null;
+    if (active !== undefined) updates.active = active;
+
+    const { data, error } = await supabase
+      .from('coupons')
+      .update(updates)
+      .eq('id', id)
+      .select()
+      .single();
+
+    if (error) {
+      console.error('[backend] update coupon error', error);
+      return res.status(500).json({ error: 'Failed to update coupon' });
+    }
+
+    res.json({ coupon: data });
+  } catch (e) {
+    console.error('[backend] PUT /admin/coupons/:id exception', e);
+    res.status(500).json({ error: 'Internal server error' });
+  }
+});
+
+// DELETE /admin/coupons/:id - delete coupon
+app.delete('/admin/coupons/:id', requireAdminApiKey, async (req, res) => {
+  try {
+    const { id } = req.params;
+
+    const { error } = await supabase
+      .from('coupons')
+      .delete()
+      .eq('id', id);
+
+    if (error) {
+      console.error('[backend] delete coupon error', error);
+      return res.status(500).json({ error: 'Failed to delete coupon' });
+    }
+
+    res.json({ success: true });
+  } catch (e) {
+    console.error('[backend] DELETE /admin/coupons/:id exception', e);
+    res.status(500).json({ error: 'Internal server error' });
   }
 });
 

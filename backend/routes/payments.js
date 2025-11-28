@@ -49,9 +49,14 @@ router.get('/coupons/validate', async (req, res) => {
 // POST /payments/orders - create order and (optionally) return payment_url
 router.post('/orders', async (req, res) => {
   try {
+    // Dev debug: log incoming payload to help diagnose missing fields
+    if (process.env.NODE_ENV !== 'production') {
+      try { console.log('[payments] incoming /orders payload:', JSON.stringify(req.body)); } catch (e) { console.log('[payments] incoming /orders payload (unserializable)'); }
+    }
 
-    const { user_id, items, shipping, payment_method = 'cod', coupon_code } = req.body;
-    if (!user_id || !Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'invalid_payload' });
+    const { user_id, items, shipping, payment_method = 'cod', coupon_code, full_name: incomingFullName } = req.body;
+    // Allow guest checkout (user_id may be null), but items must be present
+    if (!Array.isArray(items) || items.length === 0) return res.status(400).json({ error: 'invalid_payload' });
 
     const subtotal = items.reduce((s, it) => s + (Number(it.unit_price) || 0) * (Number(it.quantity) || 1), 0);
   let discount = 0;
@@ -82,8 +87,19 @@ router.post('/orders', async (req, res) => {
     const shipping_fee = 0;
     const total = Math.max(0, subtotal - discount + shipping_fee);
 
+    // Validate items shape: ensure each item has unit_price and quantity
+    if (!Array.isArray(items) || items.length === 0) {
+      if (process.env.NODE_ENV !== 'production') console.warn('[payments] validation failed - items missing or empty', { items });
+      return res.status(400).json({ error: 'invalid_payload', reason: 'items_required' });
+    }
+    const badItem = items.find((it) => typeof it.unit_price === 'undefined' || typeof it.quantity === 'undefined');
+    if (badItem) {
+      if (process.env.NODE_ENV !== 'production') console.warn('[payments] validation failed - item missing unit_price or quantity', { badItem, items });
+      return res.status(400).json({ error: 'invalid_payload', reason: 'items_missing_unit_price_or_quantity' });
+    }
+
     // Ensure full_name is provided (DB has NOT NULL constraint). Try body -> profile -> fallback.
-    let fullName = req.body.full_name || null;
+    let fullName = incomingFullName || req.body.full_name || null;
     if (!fullName) {
       if (user_id) {
         try {
@@ -94,6 +110,16 @@ router.post('/orders', async (req, res) => {
         }
       }
       if (!fullName) fullName = 'Khách hàng';
+    }
+
+    // If payment method is COD, require shipping address and phone
+    if (String(payment_method).toLowerCase() === 'cod') {
+      const addr = (shipping && shipping.address) ? String(shipping.address).trim() : '';
+      const ph = (shipping && shipping.phone) ? String(shipping.phone).trim() : '';
+      if (!addr || !ph) {
+        if (process.env.NODE_ENV !== 'production') console.warn('[payments] missing shipping info for COD', { shipping });
+        return res.status(400).json({ error: 'missing_shipping_info', reason: 'address_and_phone_required' });
+      }
     }
 
     // Insert order with subtotal/shipping/total and optional coupon_id
@@ -107,9 +133,10 @@ router.post('/orders', async (req, res) => {
         total: total,
         coupon_id: couponId,
         discount_amount: discount,
-        status: payment_method === 'cod' ? 'paid' : 'pending',
-        address: shipping?.address || 'Chưa cung cấp',
-        phone: shipping?.phone || '0000000000',
+        // Do not auto-mark COD as paid; leave as 'pending' so admin can confirm on delivery
+        status: 'pending',
+        address: shipping?.address || null,
+        phone: shipping?.phone || null,
         created_at: new Date().toISOString()
       }])
       .select()
@@ -129,7 +156,8 @@ router.post('/orders', async (req, res) => {
       provider_payment_id: null,
       amount: total,
       currency: 'VND',
-      status: payment_method === 'cod' ? 'success' : 'initiated',
+      // For COD, mark payment as initiated (not success) until delivery/confirmation
+      status: 'initiated',
       raw: { subtotal, discount, shipping_fee }
     }]).select().single();
 
@@ -414,9 +442,6 @@ router.post('/paypal/capture', async (req, res) => {
 });
 
 module.exports = router;
-
-// providers endpoint (returns which external providers are configured)
-// GET /payments/providers
 router.get('/providers', (req, res) => {
   try {
     const providers = {

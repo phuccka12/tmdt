@@ -120,22 +120,82 @@ export default function CheckoutPage() {
     if (items.length === 0) return alert('Không có sản phẩm để thanh toán');
     setLoading(true);
     try {
+      // Client-side validation for COD: require name, address, phone
+      if (paymentMethod === 'cod') {
+        if (!fullName || !fullName.trim()) {
+          alert('Vui lòng nhập họ tên nhận hàng');
+          setLoading(false);
+          return;
+        }
+        if (!phone || !phone.trim()) {
+          alert('Vui lòng nhập số điện thoại');
+          setLoading(false);
+          return;
+        }
+        if (!address || !address.trim()) {
+          alert('Vui lòng nhập địa chỉ giao hàng');
+          setLoading(false);
+          return;
+        }
+      }
       const { data: userRes } = await supabase.auth.getUser();
       const user = userRes?.user;
       const backend = import.meta.env.VITE_BACKEND_URL || 'http://localhost:54321';
 
+      // Debug log items before building payload
+      console.log('[CheckoutPage] items state before payload:', items);
+
       const payload = {
         user_id: user?.id || null,
         full_name: fullName || null,
-        items: items.map((it) => ({ product_id: it.product_id, variant_id: it.variant_id, quantity: it.quantity, unit_price: it.unit_price })),
+        // Build items payload with sensible fallbacks in case enrichment didn't finish
+        items: items.map((it) => {
+          // Try multiple fallback fields for unit_price
+          let finalPrice = it.unit_price;
+          if (typeof finalPrice === 'undefined' || finalPrice === null) {
+            finalPrice = it.price_vnd || it.product_price || it.price || 0;
+          }
+          return {
+            product_id: it.product_id || null,
+            variant_id: it.variant_id || null,
+            quantity: Number(it.quantity || 1),
+            unit_price: Number(finalPrice)
+          };
+        }),
         shipping: { address, phone },
         payment_method: paymentMethod,
         coupon_code: coupon?.code || null,
       };
 
+      console.log('[CheckoutPage] payload to send:', payload);
+
+      // Client-side validate items have unit_price and quantity
+      const itemsToSend = payload.items;
+      const bad = itemsToSend.find(i => !i || typeof i.unit_price !== 'number' || isNaN(i.unit_price) || Number(i.unit_price) <= 0 || !i.quantity || Number(i.quantity) <= 0);
+      if (bad) {
+        console.error('[CheckoutPage] Invalid item detected:', bad);
+        alert('Một hoặc nhiều sản phẩm thiếu giá/số lượng. Vui lòng thử lại hoặc kiểm tra giỏ hàng.');
+        setLoading(false);
+        return;
+      }
+
       const resp = await fetch(`${backend}/payments/orders`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload) });
       const body = await resp.json();
-      if (!resp.ok || !body.ok) return alert('Tạo đơn hàng thất bại: ' + (body.error || JSON.stringify(body)));
+      
+      console.log('[CheckoutPage] Response:', { status: resp.status, ok: resp.ok, body });
+      
+      if (!resp.ok) {
+        alert('Tạo đơn hàng thất bại: ' + (body.error || body.reason || JSON.stringify(body)));
+        setLoading(false);
+        return;
+      }
+
+      // Check if order was created successfully
+      if (!body.ok && !body.order) {
+        alert('Tạo đơn hàng thất bại: ' + (body.error || 'Unknown error'));
+        setLoading(false);
+        return;
+      }
 
       // If gateway returned a redirect URL (PayPal etc.), go there.
       if (body.payment_url) {
@@ -143,13 +203,9 @@ export default function CheckoutPage() {
         return;
       }
 
-      // For simulate / cod, redirect to success
-      if (paymentMethod === 'cod' || paymentMethod === 'simulate') {
-        navigate('/checkout/success');
-        return;
-      }
-
-      alert('Đã tạo đơn hàng. Chuyển hướng tới nhà cung cấp...');
+      // For COD and other non-redirect methods, go to success page
+      navigate('/checkout/success');
+      return;
     } catch (e: any) {
       console.error('place order error', e);
       alert('Lỗi khi tạo đơn: ' + (e?.message || String(e)));

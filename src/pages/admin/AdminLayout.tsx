@@ -10,9 +10,10 @@ import ReportsAdmin from './ReportsAdmin';
 const OrdersAdmin = lazy(() => import('./OrdersAdmin'));
 // Lazy load WebhooksAdmin to avoid circular import issues
 const WebhooksAdmin = lazy(() => import('./WebhooksAdmin'));
+const CouponsAdmin = lazy(() => import('./CouponsAdmin'));
 
 const AdminLayout: React.FC = () => {
-  const [tab, setTab] = useState<'overview' | 'accounts' | 'products' | 'reports' | 'webhooks' | 'orders'>('overview');
+  const [tab, setTab] = useState<'overview' | 'accounts' | 'products' | 'reports' | 'webhooks' | 'orders' | 'coupons'>('overview');
   const adminApiKey = import.meta.env.VITE_ADMIN_API_KEY || '';
 
   const TabButton: React.FC<{ active: boolean; onClick: () => void; children: React.ReactNode }> = ({ active, onClick, children }) => (
@@ -53,6 +54,7 @@ const AdminLayout: React.FC = () => {
             <TabButton active={tab === 'reports'} onClick={() => setTab('reports')}>Báo cáo</TabButton>
             <TabButton active={tab === 'webhooks'} onClick={() => setTab('webhooks')}>Webhooks</TabButton>
             <TabButton active={tab === 'orders'} onClick={() => setTab('orders')}>Đơn hàng</TabButton>
+            <TabButton active={tab === 'coupons'} onClick={() => setTab('coupons')}>Mã giảm giá</TabButton>
           </div>
         </div>
 
@@ -71,6 +73,11 @@ const AdminLayout: React.FC = () => {
             {tab === 'webhooks' && (
               <Suspense fallback={<div className="text-center py-8">Loading...</div>}>
                 <WebhooksAdmin />
+              </Suspense>
+            )}
+            {tab === 'coupons' && (
+              <Suspense fallback={<div className="text-center py-8">Loading...</div>}>
+                <CouponsAdmin />
               </Suspense>
             )}
           </div>
