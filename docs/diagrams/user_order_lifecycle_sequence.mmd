@@ -1,0 +1,77 @@
+ sequenceDiagram
+  participant U as User
+  participant F as Frontend
+  participant B as Backend
+  participant P as Payment Provider
+  participant DB as Supabase/Postgres
+  participant E as Email Service
+  participant S as Shipper
+
+  %% Browsing and cart
+  U->>F: Browse products & add to cart
+  F->>DB: Save/Update cart (cart rows)
+  DB-->>F: OK
+
+  %% Checkout flow
+  U->>F: Checkout (submit order request)
+  F->>B: POST /payments/orders { cart, address, phone }
+  B->>DB: Create order (status: pending) + order_items
+  DB-->>B: order row
+
+  %% Payment session
+  B->>P: Create payment session (gateway API)
+  P-->>B: payment_url / session_id
+  B-->>F: return payment_url
+  F->>U: redirect user to payment provider
+
+  %% User completes payment at provider
+  U->>P: Complete payment (approve/authorize)
+  P-->>B: (webhook) send payment notification
+  B->>P: Verify webhook signature / validate event
+  P-->>B: verification OK
+
+  %% Finalize order after payment
+  B->>DB: Insert payment row, update order.status = 'paid'
+  DB-->>B: OK
+  B->>E: Send order confirmation email to user
+  E-->>B: OK
+  B-->>F: (optional) push realtime update / emit websocket event
+
+  alt payment failed
+    P-->>B: webhook (failed)
+    B->>DB: update order.status = 'failed' or 'cancelled'
+    B->>E: notify user of failure
+  end
+
+  %% Fulfillment & shipping (admin/auto)
+  A->>B: Admin confirms & processes order (optional)
+  B->>S: Create shipment request (optional)
+  S-->>B: tracking_id
+  B->>DB: update order.status = 'shipped', add tracking
+  B->>E: send shipment email (with tracking)
+
+  %% User views order and delivery
+  U->>F: View Orders page
+  F->>B: GET /orders (authenticated)
+  B->>DB: SELECT order, order_items, payments, tracking
+  DB-->>B: order data
+  B-->>F: return order details
+  F-->>U: display order + tracking
+
+  %% Post-delivery and feedback
+  U->>F: After delivery, leave feedback / review
+  F->>B: POST /reviews (Authorization: Bearer <token>)
+  B->>DB: Verify user has a PAID order with product -> insert review
+  DB-->>B: inserted review
+  B-->>F: success
+
+  %% Optional flows: refund / return
+  U->>B: Request refund/return
+  B->>DB: update order.status = 'refund_pending'
+  B->>P: Initiate refund via payment provider
+  P-->>B: refund status
+  B->>DB: update order.status = 'refunded' / record refund
+  B->>E: notify user
+
+  note right of B: Server uses service-role key for inserts/updates
+  note left of U: Reviews only accepted after purchase (enforced by backend)

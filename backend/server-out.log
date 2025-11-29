@@ -1,0 +1,4 @@
+[dotenv@17.2.3] injecting env (19) from .env -- tip: ⚙️  override existing env vars with { override: true }
+[dotenv@17.2.3] injecting env (0) from .env -- tip: 🛠️  run anywhere with `dotenvx run -- yourcommand`
+[backend] Starting server on port 54321
+[backend] admin server listening on 54321

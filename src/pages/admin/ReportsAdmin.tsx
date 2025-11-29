@@ -1,4 +1,4 @@
-import React, { useState } from 'react';
+import React, { useState, useMemo, useRef } from 'react';
 
 const backendUrl = import.meta.env.VITE_BACKEND_URL || 'http://localhost:54321';
 const adminApiKey = import.meta.env.VITE_ADMIN_API_KEY || '';
@@ -7,6 +7,97 @@ const headersWithKey = () => ({
   'Content-Type': 'application/json',
   ...(adminApiKey ? { 'x-admin-api-key': adminApiKey } : {}),
 });
+
+// Enhanced SVG bar chart component
+const EnhancedRevenueChart: React.FC<{ data: any[]; height?: number }> = ({ data, height = 240 }) => {
+  const containerRef = useRef<HTMLDivElement | null>(null);
+  const n = data.length;
+  const margin = { top: 20, right: 16, bottom: 40, left: 64 };
+  const viewW = Math.max(600, n * 28 + margin.left + margin.right);
+  const viewH = height;
+
+  const maxRevenue = useMemo(() => Math.max(...data.map((d: any) => Number(d.revenue) || 0), 0) || 1, [data]);
+  const innerW = viewW - margin.left - margin.right;
+  const innerH = viewH - margin.top - margin.bottom;
+
+  const [hover, setHover] = useState<number | null>(null);
+
+  const fmt = (v: number) => v.toLocaleString('vi-VN') + '₫';
+
+  // grid ticks (4 lines + 0)
+  const ticks = [0, 0.25, 0.5, 0.75, 1];
+
+  return (
+    <div ref={containerRef} className="w-full relative">
+      <svg viewBox={`0 0 ${viewW} ${viewH}`} width="100%" height={viewH}>
+        <defs>
+          <linearGradient id="barGrad" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="#3b82f6" />
+            <stop offset="100%" stopColor="#60a5fa" />
+          </linearGradient>
+          <linearGradient id="barGradHover" x1="0" x2="0" y1="0" y2="1">
+            <stop offset="0%" stopColor="#2563eb" />
+            <stop offset="100%" stopColor="#3b82f6" />
+          </linearGradient>
+        </defs>
+
+        {/* Y grid lines and labels */}
+        {ticks.map((t, i) => {
+          const y = margin.top + (1 - t) * innerH;
+          const val = Math.round(maxRevenue * t);
+          return (
+            <g key={i}>
+              <line x1={margin.left} x2={viewW - margin.right} y1={y} y2={y} stroke="#e6eefb" strokeWidth={1} />
+              <text x={margin.left - 8} y={y + 4} textAnchor="end" fontSize={12} fill="#6b7280">{fmt(val)}</text>
+            </g>
+          );
+        })}
+
+        {/* Bars */}
+        {data.map((d: any, i: number) => {
+          const value = Number(d.revenue) || 0;
+          const barW = Math.max(6, innerW / n * 0.72);
+          const step = innerW / n;
+          const x = margin.left + i * step + (step - barW) / 2;
+          const h = (value / maxRevenue) * innerH;
+          const y = margin.top + (innerH - h);
+          const isHover = hover === i;
+          const label = (d.day || '').split('-')[2] || '';
+          return (
+            <g key={d.day || i}>
+              <rect
+                x={x}
+                y={y}
+                width={barW}
+                height={Math.max(1, h)}
+                rx={4}
+                fill={isHover ? 'url(#barGradHover)' : 'url(#barGrad)'}
+                style={{ transition: 'fill 150ms, transform 150ms' }}
+                onMouseEnter={() => setHover(i)}
+                onMouseLeave={() => setHover(null)}
+                onFocus={() => setHover(i)}
+              />
+
+              {/* day label */}
+              <text x={x + barW / 2} y={viewH - 8} fontSize={11} fill="#4b5563" textAnchor="middle">{label}</text>
+            </g>
+          );
+        })}
+      </svg>
+
+      {/* tooltip */}
+      {hover !== null && data[hover] && (
+        <div className="absolute z-10 pointer-events-none" style={{ left: `${((hover + 0.5) / n) * 100}%`, transform: 'translateX(-50%)', top: 8 }}>
+          <div className="bg-white border rounded-md shadow px-3 py-1 text-sm text-gray-800">
+            <div className="font-semibold">{data[hover].day}</div>
+            <div className="text-sm text-green-600">{fmt(Number(data[hover].revenue) || 0)}</div>
+            <div className="text-xs text-gray-600">{data[hover].orders} đơn • {data[hover].items} sp</div>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+};
 
 const ReportsAdmin: React.FC = () => {
   const [report, setReport] = useState<any>(null);
@@ -91,26 +182,14 @@ const ReportsAdmin: React.FC = () => {
             <p className="text-gray-500 text-center py-8">Không có dữ liệu trong tháng này</p>
           )}
 
-          {/* Simple Bar Chart */}
+          {/* Enhanced SVG Bar Chart */}
           {report.breakdown && report.breakdown.length > 0 && (
             <div className="mt-8">
               <h4 className="text-lg font-bold mb-4">📈 Biểu đồ doanh thu</h4>
-              <div className="bg-gray-50 p-6 rounded-lg">
-                <div className="flex items-end justify-between gap-2 h-64">
-                  {report.breakdown.map((b: any) => {
-                    const maxRevenue = Math.max(...report.breakdown.map((d: any) => Number(d.revenue) || 0));
-                    const height = maxRevenue > 0 ? ((Number(b.revenue) || 0) / maxRevenue) * 100 : 0;
-                    return (
-                      <div key={b.day} className="flex-1 flex flex-col items-center">
-                        <div 
-                          className="w-full bg-gradient-to-t from-blue-500 to-blue-400 rounded-t-lg transition-all hover:from-blue-600 hover:to-blue-500"
-                          style={{ height: `${height}%`, minHeight: height > 0 ? '4px' : '0' }}
-                          title={`${b.day}: ${Number(b.revenue).toLocaleString('vi-VN')}₫`}
-                        ></div>
-                        <div className="text-xs text-gray-600 mt-2">{b.day.split('-')[2]}</div>
-                      </div>
-                    );
-                  })}
+              <div className="bg-white p-6 rounded-lg shadow-sm">
+                {/* chart container */}
+                <div className="relative w-full">
+                  <EnhancedRevenueChart data={report.breakdown} height={240} />
                 </div>
               </div>
             </div>

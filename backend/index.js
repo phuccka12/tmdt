@@ -190,9 +190,10 @@ app.get('/admin/products', requireAdminApiKey, async (req, res) => {
 app.get('/admin/webhooks', requireAdminApiKey, async (req, res) => {
   try {
     const limit = Number(req.query.limit) || 50;
-    const { data, error } = await supabase.from('webhook_logs').select('*').order('created_at', { ascending: false }).limit(limit);
-    if (error) return res.status(500).json({ error: error.message || error });
-    return res.json({ data });
+  const { data, error } = await supabase.from('webhook_logs').select('*').order('created_at', { ascending: false }).limit(limit);
+  if (error) return res.status(500).json({ error: error.message || error });
+  // return as { logs } to match frontend admin UI expectation
+  return res.json({ logs: data });
   } catch (err) {
     return res.status(500).json({ error: err.message || err });
   }
@@ -203,11 +204,27 @@ app.get('/admin/webhooks/:id', requireAdminApiKey, async (req, res) => {
   try {
     const id = Number(req.params.id);
     if (!id) return res.status(400).json({ error: 'invalid id' });
-    const { data, error } = await supabase.from('webhook_logs').select('*').eq('id', id).limit(1).single();
-    if (error) return res.status(500).json({ error: error.message || error });
-    return res.json({ data });
+  const { data, error } = await supabase.from('webhook_logs').select('*').eq('id', id).limit(1).single();
+  if (error) return res.status(500).json({ error: error.message || error });
+  // return as { log } to match frontend admin UI expectation
+  return res.json({ log: data });
   } catch (err) {
     return res.status(500).json({ error: err.message || err });
+  }
+});
+
+// Admin: mark a webhook log as verified
+app.post('/admin/webhooks/:id/verify', requireAdminApiKey, async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid id' });
+
+    const { data, error } = await supabase.from('webhook_logs').update({ verified: true }).eq('id', id).select().single();
+    if (error) return res.status(500).json({ error: error.message || error });
+    return res.json({ ok: true, updated: data });
+  } catch (err) {
+    console.error('[admin] POST /admin/webhooks/:id/verify error', err);
+    return res.status(500).json({ error: err && err.message ? err.message : String(err) });
   }
 });
 

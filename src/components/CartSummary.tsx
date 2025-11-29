@@ -91,28 +91,9 @@ export default function CartSummary({
 
           <div className="space-y-2">
             <label className="flex items-center gap-3 cursor-pointer">
-              <input type="radio" name="payment" value="simulate" checked={paymentMethod === 'simulate'} onChange={() => setPaymentMethod('simulate')} />
-              <span className="text-sm">Mock / Simulate</span>
-            </label>
-
-            <label className="flex items-center gap-3 cursor-pointer">
               <input type="radio" name="payment" value="cod" checked={paymentMethod === 'cod'} onChange={() => setPaymentMethod('cod')} />
               <span className="text-sm">Thanh toán khi nhận hàng (COD)</span>
             </label>
-
-            {providers.momo ? (
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input type="radio" name="payment" value="momo" checked={paymentMethod === 'momo'} onChange={() => setPaymentMethod('momo')} />
-                <span className="text-sm">Momo</span>
-              </label>
-            ) : null}
-
-            {providers.vnpay ? (
-              <label className="flex items-center gap-3 cursor-pointer">
-                <input type="radio" name="payment" value="vnpay" checked={paymentMethod === 'vnpay'} onChange={() => setPaymentMethod('vnpay')} />
-                <span className="text-sm">VNPay</span>
-              </label>
-            ) : null}
 
             {providers.paypal ? (
               <label className="flex items-center gap-3 cursor-pointer">

@@ -18,6 +18,7 @@ const WebhookDetail: React.FC = () => {
   const { id } = useParams<{ id: string }>();
   const [log, setLog] = useState<WebhookDetail | null>(null);
   const [loading, setLoading] = useState(true);
+  const [verifying, setVerifying] = useState(false);
 
   useEffect(() => {
     fetchDetail();
@@ -33,8 +34,13 @@ const WebhookDetail: React.FC = () => {
       const res = await fetch(`http://localhost:54321/admin/webhooks/${id}`, {
         headers: { 'x-admin-api-key': adminKey },
       });
-      const data = await res.json();
-      if (data.log) setLog(data.log);
+  const payload = await res.json();
+  // support { log: {...} } or { data: {...} } or { data: [...] }
+  let logObj = payload?.log || payload?.data || null;
+  if (Array.isArray(logObj)) logObj = logObj[0] || null;
+  // if payload itself is the log object
+  if (!logObj && payload && payload.id) logObj = payload;
+  if (logObj) setLog(logObj as any);
     } catch (err) {
       console.error('Failed to fetch webhook detail', err);
     } finally {
@@ -42,13 +48,13 @@ const WebhookDetail: React.FC = () => {
     }
   };
 
-  if (loading) return <div className="container mx-auto px-4 py-8">Loading...</div>;
-  if (!log) return <div className="container mx-auto px-4 py-8">Webhook log not found.</div>;
+  if (loading) return <div className="container mx-auto px-4 py-8">Đang tải...</div>;
+  if (!log) return <div className="container mx-auto px-4 py-8">Không tìm thấy bản ghi webhook.</div>;
 
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="mb-6">
-        <Link to="/admin/webhooks" className="text-blue-600 hover:underline">← Back to Webhooks</Link>
+        <Link to="/admin/webhooks" className="text-blue-600 hover:underline">← Quay lại danh sách webhook</Link>
       </div>
 
       <h1 className="text-3xl font-black mb-6">Webhook Log #{log.id}</h1>
@@ -56,38 +62,80 @@ const WebhookDetail: React.FC = () => {
       <div className="bg-white rounded-lg shadow p-6 mb-6">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
-            <p className="text-sm text-gray-600">Provider</p>
+            <p className="text-sm text-gray-600">Nhà cung cấp</p>
             <p className="font-semibold capitalize">{log.provider}</p>
           </div>
           <div>
-            <p className="text-sm text-gray-600">Event Type</p>
+            <p className="text-sm text-gray-600">Loại sự kiện</p>
             <p className="font-semibold">{log.event_type}</p>
           </div>
           <div>
-            <p className="text-sm text-gray-600">Provider Event ID</p>
+            <p className="text-sm text-gray-600">Mã sự kiện</p>
             <p className="font-semibold">{log.provider_event_id || '-'}</p>
           </div>
           <div>
-            <p className="text-sm text-gray-600">Created At</p>
+            <p className="text-sm text-gray-600">Tạo lúc</p>
             <p className="font-semibold">{new Date(log.created_at).toLocaleString('vi-VN')}</p>
           </div>
           <div>
-            <p className="text-sm text-gray-600">Verified</p>
-            <p className={`font-semibold ${log.verified ? 'text-green-600' : 'text-red-600'}`}>
-              {log.verified ? '✓ Yes' : '✗ No'}
-            </p>
+            <p className="text-sm text-gray-600">Đã xác minh</p>
+            <div className="flex items-center gap-3">
+              <p className={`font-semibold ${log.verified ? 'text-green-600' : 'text-red-600'}`}>
+                {log.verified ? '✓ Có' : '✗ Không'}
+              </p>
+              {!log.verified && (
+                <button
+                  className="bg-blue-600 text-white text-sm px-3 py-1 rounded disabled:opacity-50"
+                  onClick={async () => {
+                    if (!id) return;
+                    const confirmOk = window.confirm('Đánh dấu bản ghi này là đã xác minh?');
+                    if (!confirmOk) return;
+                    try {
+                      setVerifying(true);
+                      const adminKey = localStorage.getItem('admin_api_key') || prompt('Enter ADMIN_API_KEY:');
+                      if (!adminKey) return;
+                      localStorage.setItem('admin_api_key', adminKey);
+                      const res = await fetch(`http://localhost:54321/admin/webhooks/${id}/verify`, {
+                        method: 'POST',
+                        headers: { 'x-admin-api-key': adminKey, 'content-type': 'application/json' },
+                      });
+                      const body = await res.json();
+                      if (!res.ok) {
+                        alert('Không thể đánh dấu đã xác minh: ' + (body && body.error ? body.error : res.statusText));
+                      } else {
+                        // update UI with returned updated object when available
+                        const updated = body?.updated || body?.log || body?.data || null;
+                        if (updated && updated.id) setLog(updated as any);
+                        else {
+                          // fallback: refetch
+                          fetchDetail();
+                        }
+                      }
+                    } catch (err) {
+                      console.error('verify failed', err);
+                      alert('Lỗi khi gửi yêu cầu xác minh');
+                    } finally {
+                      setVerifying(false);
+                    }
+                  }}
+                  disabled={verifying}
+                >
+                  {verifying ? 'Đang xác minh...' : 'Đánh dấu đã xác minh'}
+                </button>
+              )}
+            </div>
           </div>
           <div>
-            <p className="text-sm text-gray-600">Processed</p>
+            <p className="text-sm text-gray-600">Đã xử lý</p>
             <p className={`font-semibold ${log.processed ? 'text-green-600' : 'text-yellow-600'}`}>
-              {log.processed ? '✓ Yes' : '⏳ Pending'}
+              {log.processed ? '✓ Đã xử lý' : '⏳ Chưa xử lý'}
             </p>
           </div>
         </div>
 
         {log.processing_error && (
           <div className="mt-4 p-4 bg-red-50 border border-red-200 rounded">
-            <p className="text-sm text-gray-600 mb-1">Processing Error</p>
+            <p className="text-sm text-gray-600 mb-1">Lỗi xử lý</p>
             <p className="text-red-700 font-mono text-sm">{log.processing_error}</p>
           </div>
         )}
@@ -101,7 +149,7 @@ const WebhookDetail: React.FC = () => {
       </div>
 
       <div className="bg-white rounded-lg shadow p-6">
-        <h2 className="text-xl font-bold mb-4">Raw Payload</h2>
+        <h2 className="text-xl font-bold mb-4">Payload thô</h2>
         <pre className="bg-gray-100 p-4 rounded overflow-auto text-sm">
           {JSON.stringify(log.raw_payload, null, 2)}
         </pre>

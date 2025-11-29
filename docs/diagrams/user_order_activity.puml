@@ -1,0 +1,53 @@
+@startuml
+' User order lifecycle - Activity diagram (PlantUML)
+start
+:Browse products;
+:Add items to cart;
+if (Ready to checkout?) then (yes)
+  :Enter shipping address & phone;
+  :Review order summary;
+  -> Frontend: Submit order request
+  :Create order (status = pending);
+  :Create payment session (gateway);
+  fork
+    :Redirect user to payment provider;
+  fork again
+    :Wait for webhook / payment notification;
+  end fork
+  if (Payment succeeded?) then (yes)
+    :Insert payment row;
+    :Update order.status = paid;
+    :Send confirmation email;
+    -> Admin: notify order received
+    if (Auto-fulfill?) then (yes)
+      :Create shipment request;
+      :Receive tracking id;
+      :Update order.status = shipped;
+      :Send shipment email;
+    else (manual)
+      :Admin processes order;
+    endif
+    :Mark delivered when courier reports delivered;
+    :Allow customer to leave review (if purchased);
+    if (Customer requests refund?) then (yes)
+      :Set order.status = refund_pending;
+      :Initiate refund with payment provider;
+      if (Refund success?) then (yes)
+        :Set order.status = refunded;
+        :Notify customer;
+      else (no)
+        :Set order.status = refund_failed;
+        :Notify customer;
+      endif
+    else (no)
+      :End
+    endif
+  else (no)
+    :Update order.status = failed;
+    :Notify customer about failed payment;
+  endif
+else (no)
+  stop
+endif
+stop
+@enduml

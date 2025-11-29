@@ -1,0 +1,92 @@
+@startuml
+' User order lifecycle - PlantUML sequence diagram
+actor User as U
+participant Frontend as F
+participant Backend as B
+participant PaymentProvider as P
+database Database as DB
+participant EmailService as E
+participant Shipper as S
+actor Admin as A
+
+== Browsing & Cart ==
+U -> F: Browse products, add to cart
+F -> DB: upsert cart rows
+DB --> F: OK
+
+== Checkout & Order creation ==
+U -> F: Checkout (address, phone, payment method)
+F -> B: POST /payments/orders {cart, address, phone}
+B -> DB: create order (status: pending) + order_items
+DB --> B: order row
+B -> P: create payment session / intent
+P --> B: payment_url / session_id
+B --> F: return payment_url
+F -> U: redirect to payment provider
+
+== Payment completes at provider ==
+U -> P: complete/authorize payment
+P -> B: webhook (payment event)
+B -> P: verify webhook signature / validate event
+P --> B: verification OK
+
+alt payment success
+  B -> DB: insert payment row; update order.status = 'paid'
+  DB --> B: OK
+  B -> E: send order confirmation email
+  E --> B: OK
+  B -> F: (optional) push realtime update to UI
+else payment failed
+  B -> DB: update order.status = 'failed'
+  B -> E: notify user of failed payment
+end
+
+== Fulfillment & Shipping ==
+A -> B: admin confirms & processes order
+B -> S: create shipment request
+S --> B: tracking_id
+B -> DB: update order.status = 'shipped' and add tracking
+B -> E: send shipment email (with tracking)
+
+== User views orders ==
+U -> F: View Orders page
+F -> B: GET /orders (authenticated)
+B -> DB: SELECT order, order_items, payments, tracking
+DB --> B: order data
+B --> F: return order details
+F --> U: display order + tracking
+
+== Post-delivery: Review/Feedback ==
+U -> F: Leave review for product
+F -> B: POST /reviews (Authorization: Bearer <token>)
+B -> DB: verify user has a PAID order containing product
+alt user purchased
+  B -> DB: insert product_review
+  DB --> B: inserted review
+  B --> F: return success
+else not purchased
+  B --> F: 403 Forbidden (reject review)
+end
+
+== Refund / Return (optional) ==
+U -> B: Request refund/return
+B -> DB: update order.status = 'refund_pending'
+B -> P: initiate refund via payment provider
+P --> B: refund status (success/failure)
+alt refund success
+  B -> DB: update order.status = 'refunded'
+  B -> E: notify user
+else refund failed
+  B -> DB: update order.status = 'refund_failed'
+  B -> E: notify user
+end
+
+note right of B
+  Backend uses service-role key to perform sensitive operations
+  Webhook verification is required before updating payment/order state
+end note
+
+note left of U
+  Reviews are accepted only after successful purchase (enforced server-side)
+end note
+@enduml

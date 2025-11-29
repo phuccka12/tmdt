@@ -20,6 +20,27 @@ function hmacSHA256(key, msg) {
   return crypto.createHmac('sha256', key).update(msg).digest('hex');
 }
 
+// Helper: get user id from Authorization: Bearer <token>
+async function getUserIdFromReq(req) {
+  try {
+    const authHeader = req.headers.authorization || '';
+    const token = authHeader.split(' ')[1];
+    if (!token) return null;
+    const authUrl = (SUPABASE_URL || '').replace(/\/$/, '') + '/auth/v1/user';
+    const resp = await axios.get(authUrl, {
+      headers: {
+        Authorization: `Bearer ${token}`,
+        apikey: SUPABASE_SERVICE_ROLE_KEY || ''
+      },
+      timeout: 5000
+    });
+    if (resp && resp.data) return resp.data.id || (resp.data.user && resp.data.user.id) || null;
+  } catch (e) {
+    // ignore and return null
+  }
+  return null;
+}
+
 // Validate coupon: GET /payments/coupons/validate?code=CODE&subtotal=12345
 router.get('/coupons/validate', async (req, res) => {
   try {
@@ -219,6 +240,97 @@ router.get('/redirect-simulate', async (req, res) => {
   } catch (err) {
     console.error('[payments] redirect-simulate', err);
     return res.status(500).send('server error');
+  }
+});
+
+// GET /payments/orders/:id - return order details (order, items, payments, profile)
+router.get('/orders/:id', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid_id' });
+
+    const { data: order, error } = await supabaseAdmin
+      .from('orders')
+      .select('*, order_items(*, products(*)), payments(*), profiles(email, full_name)')
+      .eq('id', id)
+      .single();
+
+    if (error || !order) return res.status(404).json({ error: 'order_not_found' });
+
+    // Allow access if requester is admin (ADMIN_API_KEY) or the order owner
+    const adminKey = req.headers['x-admin-api-key'] || req.query.admin_key;
+    if (process.env.ADMIN_API_KEY && adminKey && adminKey === process.env.ADMIN_API_KEY) {
+      return res.json({ ok: true, order });
+    }
+
+    const userId = await getUserIdFromReq(req);
+    if (userId && String(userId) === String(order.user_id)) {
+      return res.json({ ok: true, order });
+    }
+
+    return res.status(403).json({ error: 'forbidden' });
+  } catch (err) {
+    console.error('[payments] GET /orders/:id error', err);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
+
+// POST /payments/orders/:id/support - admin-only: add support note and optionally update order status
+router.post('/orders/:id/support', express.json(), async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid_id' });
+
+    // Check admin key first
+    const adminKey = req.headers['x-admin-api-key'] || req.query.admin_key;
+    const isAdmin = process.env.ADMIN_API_KEY && adminKey && adminKey === process.env.ADMIN_API_KEY;
+
+    // If not admin, validate requester is order owner
+    let requesterUserId = null;
+    if (!isAdmin) {
+      requesterUserId = await getUserIdFromReq(req);
+      if (!requesterUserId) return res.status(403).json({ error: 'forbidden' });
+      // verify ownership
+      const { data: orderRow } = await supabaseAdmin.from('orders').select('user_id').eq('id', id).limit(1).single();
+      if (!orderRow || String(orderRow.user_id) !== String(requesterUserId)) return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const { note, action, set_status } = req.body || {};
+    if (!note && !set_status && !action) return res.status(400).json({ error: 'nothing_to_do' });
+
+    // Store support message in webhook_logs for audit/history
+    const logPayload = {
+      provider: 'support',
+      event_type: action || 'support_note',
+      provider_event_id: String(id),
+      headers: {},
+      raw_payload: { note, action, by_admin: isAdmin ? true : false, user_id: requesterUserId || null },
+      // Support notes created by users should not be auto-verified.
+      // Only external provider webhooks (e.g. PayPal) or explicit admin actions are considered verified.
+      verified: false,
+      processed: false,
+      processing_error: null,
+      created_at: new Date().toISOString()
+    };
+
+    const { data: inserted, error: insertErr } = await supabaseAdmin.from('webhook_logs').insert(logPayload).select().limit(1).single();
+    if (insertErr) console.warn('[payments] failed to insert support log', insertErr);
+
+    let orderUpdate = null;
+    if (isAdmin && set_status) {
+      try {
+        const { data, error: updErr } = await supabaseAdmin.from('orders').update({ status: set_status }).eq('id', id).select().single();
+        if (updErr) console.warn('[payments] orders.update returned error', updErr);
+        orderUpdate = data || null;
+      } catch (e) {
+        console.warn('[payments] orders.update exception', e);
+      }
+    }
+
+    return res.json({ ok: true, inserted: inserted || null, order: orderUpdate });
+  } catch (err) {
+    console.error('[payments] POST /orders/:id/support error', err);
+    return res.status(500).json({ error: 'server_error' });
   }
 });
 
@@ -442,6 +554,29 @@ router.post('/paypal/capture', async (req, res) => {
 });
 
 module.exports = router;
+// Admin: mark a webhook log as verified
+router.post('/admin/webhooks/:id/verify', async (req, res) => {
+  try {
+    const id = Number(req.params.id);
+    if (!id) return res.status(400).json({ error: 'invalid_id' });
+
+    const adminKey = req.headers['x-admin-api-key'] || req.query.admin_key;
+    if (!(process.env.ADMIN_API_KEY && adminKey && adminKey === process.env.ADMIN_API_KEY)) {
+      return res.status(403).json({ error: 'forbidden' });
+    }
+
+    const { data, error } = await supabaseAdmin.from('webhook_logs').update({ verified: true }).eq('id', id).select().single();
+    if (error) {
+      console.warn('[payments] admin verify webhook update failed', error);
+      return res.status(500).json({ error: 'update_failed' });
+    }
+
+    return res.json({ ok: true, updated: data });
+  } catch (err) {
+    console.error('[payments] POST /admin/webhooks/:id/verify error', err);
+    return res.status(500).json({ error: 'server_error' });
+  }
+});
 router.get('/providers', (req, res) => {
   try {
     const providers = {

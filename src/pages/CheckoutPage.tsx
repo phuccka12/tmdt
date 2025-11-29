@@ -263,29 +263,9 @@ export default function CheckoutPage() {
                     <div className="text-sm text-gray-500">Thanh toán qua PayPal (Sandbox)</div>
                   </button>
                 ) : null}
-
-                {providers.momo ? (
-                  <button onClick={() => setPaymentMethod('momo')} className={`p-3 rounded-lg border ${paymentMethod==='momo' ? 'border-pink-600 bg-pink-50' : 'hover:shadow'}`}>
-                    <div className="font-medium">📱 Momo</div>
-                    <div className="text-sm text-gray-500">Ví điện tử Momo</div>
-                  </button>
-                ) : null}
-
-                {providers.vnpay ? (
-                  <button onClick={() => setPaymentMethod('vnpay')} className={`p-3 rounded-lg border ${paymentMethod==='vnpay' ? 'border-red-600 bg-red-50' : 'hover:shadow'}`}>
-                    <div className="font-medium">🏦 VNPay</div>
-                    <div className="text-sm text-gray-500">Ngân hàng nội địa</div>
-                  </button>
-                ) : null}
-
                 <button onClick={() => setPaymentMethod('cod')} className={`p-3 rounded-lg border ${paymentMethod==='cod' ? 'border-green-600 bg-green-50' : 'hover:shadow'}`}>
                   <div className="font-medium">📦 COD</div>
                   <div className="text-sm text-gray-500">Thanh toán khi nhận hàng</div>
-                </button>
-
-                <button onClick={() => setPaymentMethod('simulate')} className={`p-3 rounded-lg border ${paymentMethod==='simulate' ? 'border-gray-800 bg-gray-100' : 'hover:shadow'}`}>
-                  <div className="font-medium">🧪 Mock</div>
-                  <div className="text-sm text-gray-500">Dùng cho kiểm thử</div>
                 </button>
               </div>
             </div>

@@ -1,6 +1,8 @@
 import React, { useEffect, useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { supabase } from '../supabaseClient';
+import SupportModal from '../components/SupportModal';
+import OrderSummaryModal from '../components/OrderSummaryModal';
 
 const formatVnd = (n: number) => n.toLocaleString('vi-VN', { style: 'currency', currency: 'VND' }).replace('₫', 'đ');
 
@@ -9,6 +11,8 @@ export default function OrdersPage() {
   const [orders, setOrders] = useState<any[]>([]);
   const [loading, setLoading] = useState(true);
   const [cancelling, setCancelling] = useState<number | null>(null);
+  const [supportOrderId, setSupportOrderId] = useState<number | null>(null);
+  const [summaryOrder, setSummaryOrder] = useState<any | null>(null);
 
   const fetchOrders = async () => {
     setLoading(true);
@@ -80,6 +84,7 @@ export default function OrdersPage() {
   }, []);
 
   return (
+    <>
     <section className="container mx-auto px-4 py-10">
       <h1 className="text-2xl font-bold mb-6">Đơn hàng của tôi</h1>
 
@@ -123,8 +128,8 @@ export default function OrdersPage() {
                   <div className="text-sm mb-3">{o.address || '—'} • {o.phone || ''}</div>
                   <div className="flex flex-col gap-2">
                     <div className="flex gap-2">
-                      <button onClick={() => navigate(`/orders/${o.id}`, { state: { order: o } })} className="px-3 py-2 rounded bg-black text-white text-sm">Chi tiết</button>
-                      <button onClick={() => alert('Chức năng theo dõi/đổi trả chưa triển khai')} className="px-3 py-2 rounded border text-sm">Hỗ trợ</button>
+                      <button onClick={() => setSummaryOrder(o)} className="px-3 py-2 rounded bg-black text-white text-sm">Chi tiết</button>
+                      <button onClick={() => setSupportOrderId(o.id)} className="px-3 py-2 rounded border text-sm">Hỗ trợ</button>
                     </div>
                     {/* Show cancel button only if order is cancelable (pending and not processed) */}
                     {o.status === 'pending' && !o.processed && !o.cancelled_at && (
@@ -144,5 +149,12 @@ export default function OrdersPage() {
         </div>
       )}
     </section>
+    {supportOrderId && (
+      <SupportModal orderId={supportOrderId as number} onClose={() => setSupportOrderId(null)} onSubmitted={() => fetchOrders()} />
+    )}
+    {summaryOrder && (
+      <OrderSummaryModal order={summaryOrder} onClose={() => setSummaryOrder(null)} />
+    )}
+    </>
   );
 }

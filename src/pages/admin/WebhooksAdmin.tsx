@@ -31,8 +31,10 @@ const WebhooksAdmin: React.FC = () => {
       const res = await fetch('http://localhost:54321/admin/webhooks', {
         headers: { 'x-admin-api-key': adminKey },
       });
-      const data = await res.json();
-      if (data.logs) setLogs(data.logs);
+  const payload = await res.json();
+  // support multiple response shapes: { logs: [...] } or { data: [...] } or raw array
+  const logsArr = payload?.logs || payload?.data || (Array.isArray(payload) ? payload : null) || [];
+  setLogs(Array.isArray(logsArr) ? logsArr : []);
     } catch (err) {
       console.error('Failed to fetch webhook logs', err);
     } finally {
@@ -67,27 +69,27 @@ const WebhooksAdmin: React.FC = () => {
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="flex justify-between items-center mb-6">
-        <h1 className="text-3xl font-black">Webhook Logs</h1>
+        <h1 className="text-3xl font-black">Nhật ký Webhook</h1>
         <button onClick={fetchLogs} className="bg-black text-white px-4 py-2 rounded hover:bg-gray-800">
-          Refresh
+          Làm mới
         </button>
       </div>
 
       {logs.length === 0 ? (
-        <p className="text-gray-600">No webhook logs yet.</p>
+        <p className="text-gray-600">Chưa có nhật ký webhook.</p>
       ) : (
         <div className="overflow-x-auto">
           <table className="min-w-full bg-white border">
             <thead className="bg-gray-100">
               <tr>
                 <th className="px-4 py-3 text-left text-sm font-semibold">ID</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold">Provider</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold">Event Type</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold">Event ID</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold">Verified</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold">Processed</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold">Created</th>
-                <th className="px-4 py-3 text-left text-sm font-semibold">Actions</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold">Nhà cung cấp</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold">Loại sự kiện</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold">Mã sự kiện</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold">Đã xác minh</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold">Đã xử lý</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold">Tạo lúc</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold">Hành động</th>
               </tr>
             </thead>
             <tbody>
@@ -99,16 +101,16 @@ const WebhooksAdmin: React.FC = () => {
                   <td className="px-4 py-3 text-sm text-gray-600">{log.provider_event_id || '-'}</td>
                   <td className="px-4 py-3">
                     {log.verified ? (
-                      <span className="text-green-600 font-semibold">✓</span>
+                      <span className="text-green-600 font-semibold">✓ Có</span>
                     ) : (
-                      <span className="text-red-600 font-semibold">✗</span>
+                      <span className="text-red-600 font-semibold">✗ Không</span>
                     )}
                   </td>
                   <td className="px-4 py-3">
                     {log.processed ? (
-                      <span className="text-green-600 font-semibold">✓</span>
+                      <span className="text-green-600 font-semibold">✓ Đã xử lý</span>
                     ) : (
-                      <span className="text-yellow-600 font-semibold">⏳</span>
+                      <span className="text-yellow-600 font-semibold">⏳ Chưa xử lý</span>
                     )}
                   </td>
                   <td className="px-4 py-3 text-sm">{new Date(log.created_at).toLocaleString('vi-VN')}</td>
@@ -117,14 +119,14 @@ const WebhooksAdmin: React.FC = () => {
                       to={`/admin/webhooks/${log.id}`}
                       className="text-blue-600 hover:underline text-sm"
                     >
-                      View
+                      Xem
                     </Link>
                     {!log.processed && (
                       <button
                         onClick={() => reprocess(log.id)}
                         className="text-orange-600 hover:underline text-sm"
                       >
-                        Reprocess
+                        Xử lý lại
                       </button>
                     )}
                   </td>
