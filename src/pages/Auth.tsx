@@ -21,11 +21,7 @@ const Auth: React.FC = () => {
   const onSignUp = async () => {
     setLoading(true);
     setNote(null);
-
-        // NOTE: avoid sending redirectTo here to prevent 400 errors if the URL
-        // is not whitelisted in Supabase Auth settings. We'll rely on default flow.
         try {
-          // signUp with email/password. Metadata will be upserted into profiles table separately.
           const { data, error } = await supabase.auth.signUp({ email, password });
           console.log('[Auth] signUp result', { data, error });
 
@@ -34,9 +30,6 @@ const Auth: React.FC = () => {
             setNote(error.message || 'Đăng ký thất bại');
             return;
       }
-
-      // Hybrid approach: try to upsert a profile record immediately for the new user.
-      // If the profiles table doesn't exist yet, this will fail silently (we only log).
       try {
         const user = data?.user;
         if (user) {
@@ -86,17 +79,10 @@ const Auth: React.FC = () => {
     }
 
       try {
-        // Redirect back to an in-app reset page after user clicks the email link.
-        // Make sure the URL is whitelisted in Supabase Auth settings.
         const redirectTo = `${window.location.origin}/auth/reset-password`;
-        // use auth client resetPasswordForEmail (v2)
         const result = await supabase.auth.resetPasswordForEmail(email, { redirectTo });
-        // Log result for debugging (do not expose tokens)
         console.log('[Auth] resetPasswordForEmail result', result);
         setLoading(false);
-        // v2 returns { data, error }
-        // Show message based on error presence
-        // @ts-ignore
         if (result?.error) setNote(result.error.message || String(result.error));
         else setNote('Đã gửi email hướng dẫn thay đổi mật khẩu. Vui lòng kiểm tra email của bạn.');
       } catch (e: any) {
@@ -107,7 +93,7 @@ const Auth: React.FC = () => {
   };
 
   const togglePassword = () => {
-    setShowPassword(!showPassword);  // Chuyển đổi trạng thái ẩn/hiện mật khẩu
+    setShowPassword(!showPassword);  
   };
 
   return (

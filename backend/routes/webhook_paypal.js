@@ -28,8 +28,15 @@ async function processPaypalEvent(supabase, event, logRow = null) {
 
   // Idempotency: check if payment already exists with provider_payment_id and status success
   if (provider_payment_id) {
-    const existingRes = await supabase.from('payments').select('*').eq('provider_payment_id', provider_payment_id).limit(1).single().catch(() => ({ data: null }));
-    const existing = existingRes && existingRes.data ? existingRes.data : existingRes.data;
+    let existing = null;
+    try {
+      const existingRes = await supabase.from('payments').select('*').eq('provider_payment_id', provider_payment_id).limit(1).single();
+      existing = existingRes && existingRes.data ? existingRes.data : null;
+    } catch (e) {
+      // ignore lookup errors and treat as not found
+      existing = null;
+    }
+
     if (existing && existing.status === 'success') {
       if (logRow && logRow.id) {
         try { await supabase.from('webhook_logs').update({ processed: true }).eq('id', logRow.id); } catch (e) {}
@@ -42,8 +49,13 @@ async function processPaypalEvent(supabase, event, logRow = null) {
   let orderId = null;
   try { orderId = resource.supplementary_data && resource.supplementary_data.related_ids && resource.supplementary_data.related_ids.order_id; } catch (e) { orderId = null; }
   if (!orderId && provider_payment_id) {
-    const pRes = await supabase.from('payments').select('order_id').eq('provider_payment_id', provider_payment_id).limit(1).single().catch(() => ({ data: null }));
-    if (pRes && pRes.data && pRes.data.order_id) orderId = pRes.data.order_id;
+    try {
+      const pRes = await supabase.from('payments').select('order_id').eq('provider_payment_id', provider_payment_id).limit(1).single();
+      if (pRes && pRes.data && pRes.data.order_id) orderId = pRes.data.order_id;
+    } catch (e) {
+      // ignore lookup errors
+      orderId = orderId;
+    }
   }
 
   // Handle capture completed
@@ -143,6 +155,7 @@ function registerWebhook(app, supabase) {
       }
 
       const verify = await paypal.verifyWebhookSignature(rawJson, headers);
+      console.log('[webhook/paypal] verify result:', verify && (verify.raw || verify));
       if (!verify || !verify.verified) {
         console.warn('[webhook/paypal] signature verify failed', verify);
         // update webhook log if present

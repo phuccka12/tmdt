@@ -54,7 +54,7 @@ const WebhookDetail: React.FC = () => {
   return (
     <div className="container mx-auto px-4 py-8">
       <div className="mb-6">
-        <Link to="/admin/webhooks" className="text-blue-600 hover:underline">← Quay lại danh sách webhook</Link>
+        <Link to="/admin" className="text-blue-600 hover:underline">← Quay lại danh sách webhook</Link>
       </div>
 
       <h1 className="text-3xl font-black mb-6">Webhook Log #{log.id}</h1>
@@ -129,6 +129,29 @@ const WebhookDetail: React.FC = () => {
             <p className="text-sm text-gray-600">Đã xử lý</p>
             <p className={`font-semibold ${log.processed ? 'text-green-600' : 'text-yellow-600'}`}>
               {log.processed ? '✓ Đã xử lý' : '⏳ Chưa xử lý'}
+            </p>
+          </div>
+          {/* inferred user info (from backend enrichment) */}
+          <div>
+            <p className="text-sm text-gray-600">Người gửi</p>
+            <p className="font-semibold">
+              {(() => {
+                const inferred = (log as any)._inferred;
+                const user = inferred && inferred.user ? inferred.user : null;
+                if (user) return user.email || user.full_name || user.id;
+                try {
+                  let raw: any = (log as any).raw_payload || {};
+                  if (typeof raw === 'string') {
+                    try { raw = JSON.parse(raw); } catch (e) { /* keep as string */ }
+                  }
+                  // support: raw may include sender object (newly added) - prefer email
+                  if (raw && raw.sender && (raw.sender.email || raw.sender.full_name)) return raw.sender.email || raw.sender.full_name;
+                  if (raw && raw.user && (raw.user.email || raw.user.full_name)) return raw.user.email || raw.user.full_name;
+                  if (raw && raw.resource && raw.resource.payer && raw.resource.payer.email_address) return raw.resource.payer.email_address;
+                  if (raw && raw.user_id) return raw.user_id;
+                } catch (e) {}
+                return '-';
+              })()}
             </p>
           </div>
         </div>

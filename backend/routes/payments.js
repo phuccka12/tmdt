@@ -299,12 +299,23 @@ router.post('/orders/:id/support', express.json(), async (req, res) => {
     if (!note && !set_status && !action) return res.status(400).json({ error: 'nothing_to_do' });
 
     // Store support message in webhook_logs for audit/history
+    // Build raw_payload and include sender info when possible
+    const rawPayload = { note, action, by_admin: isAdmin ? true : false, user_id: requesterUserId || null };
+    if (requesterUserId) {
+      try {
+        const { data: profile } = await supabaseAdmin.from('profiles').select('id,full_name,email').eq('id', requesterUserId).limit(1).single();
+        if (profile) rawPayload.sender = { id: profile.id, full_name: profile.full_name || null, email: profile.email || null };
+      } catch (e) {
+        // ignore lookup errors
+      }
+    }
+
     const logPayload = {
       provider: 'support',
       event_type: action || 'support_note',
       provider_event_id: String(id),
       headers: {},
-      raw_payload: { note, action, by_admin: isAdmin ? true : false, user_id: requesterUserId || null },
+      raw_payload: rawPayload,
       // Support notes created by users should not be auto-verified.
       // Only external provider webhooks (e.g. PayPal) or explicit admin actions are considered verified.
       verified: false,

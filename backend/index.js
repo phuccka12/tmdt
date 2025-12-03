@@ -14,6 +14,9 @@ process.on('unhandledRejection', (reason, p) => {
   console.error('[backend] Unhandled Rejection at:', p, 'reason:', reason && reason.stack ? reason.stack : reason);
 });
 try {
+  // provide a fallback fetch implementation for Node < 18 where global fetch isn't available
+  // fetchFn will be set to the node-fetch module if available
+  if (typeof fetchFn === 'undefined') var fetchFn = null;
   if (!fetchFn) fetchFn = require('node-fetch');
 } catch (e) {
   // node-fetch not installed or cannot be required; if global fetch missing, password updates will fail later with clear error
@@ -192,8 +195,59 @@ app.get('/admin/webhooks', requireAdminApiKey, async (req, res) => {
     const limit = Number(req.query.limit) || 50;
   const { data, error } = await supabase.from('webhook_logs').select('*').order('created_at', { ascending: false }).limit(limit);
   if (error) return res.status(500).json({ error: error.message || error });
+
+  // Enrich logs with inferred order_id and user info when possible (no DB schema changes)
+  const enriched = await Promise.all((data || []).map(async (log) => {
+    try {
+      const payload = log && log.raw_payload ? log.raw_payload : null;
+      let orderId = null;
+      try { orderId = payload && payload.resource && payload.resource.supplementary_data && payload.resource.supplementary_data.related_ids && payload.resource.supplementary_data.related_ids.order_id ? payload.resource.supplementary_data.related_ids.order_id : null; } catch (e) { orderId = null; }
+      if (!orderId && payload && payload.resource && payload.resource.order_id) orderId = payload.resource.order_id;
+      // fallback: provider_event_id may contain the order id (used for support notes)
+      if (!orderId && log && log.provider_event_id) {
+        const tryNum = Number(log.provider_event_id);
+        if (!Number.isNaN(tryNum) && tryNum > 0) orderId = tryNum;
+      }
+
+      // if payload contains a direct user_id (support notes), prefer that
+      try {
+        const directUserId = payload && (payload.user_id || (payload.raw && payload.raw.user_id)) ? (payload.user_id || (payload.raw && payload.raw.user_id)) : null;
+        if (directUserId) {
+          try {
+            const { data: pdata } = await supabase.from('profiles').select('id, full_name, email').eq('id', directUserId).limit(1).single();
+            if (pdata) {
+              log._inferred = log._inferred || {};
+              log._inferred.user = pdata;
+              return log;
+            }
+          } catch (profileErr) { /* ignore */ }
+        }
+      } catch (e) { /* ignore */ }
+
+      if (orderId) {
+        // lookup order to find user_id
+        try {
+          const { data: odata } = await supabase.from('orders').select('user_id').eq('id', orderId).limit(1).single();
+          if (odata && odata.user_id) {
+            const uid = odata.user_id;
+            // attempt to fetch basic profile info
+            try {
+              const { data: pdata } = await supabase.from('profiles').select('id, full_name, email').eq('id', uid).limit(1).single();
+              log._inferred = log._inferred || {};
+              log._inferred.order_id = orderId;
+              log._inferred.user = pdata ? pdata : { id: uid };
+            } catch (profileErr) { /* ignore */ }
+          }
+        } catch (orderErr) { /* ignore */ }
+      }
+      return log;
+    } catch (e) {
+      return log;
+    }
+  }));
+
   // return as { logs } to match frontend admin UI expectation
-  return res.json({ logs: data });
+  return res.json({ logs: enriched });
   } catch (err) {
     return res.status(500).json({ error: err.message || err });
   }
@@ -206,6 +260,51 @@ app.get('/admin/webhooks/:id', requireAdminApiKey, async (req, res) => {
     if (!id) return res.status(400).json({ error: 'invalid id' });
   const { data, error } = await supabase.from('webhook_logs').select('*').eq('id', id).limit(1).single();
   if (error) return res.status(500).json({ error: error.message || error });
+
+  // try to infer user/order info from raw_payload
+    try {
+    const payload = data && data.raw_payload ? data.raw_payload : null;
+    let orderId = null;
+    try { orderId = payload && payload.resource && payload.resource.supplementary_data && payload.resource.supplementary_data.related_ids && payload.resource.supplementary_data.related_ids.order_id ? payload.resource.supplementary_data.related_ids.order_id : null; } catch (e) { orderId = null; }
+    if (!orderId && payload && payload.resource && payload.resource.order_id) orderId = payload.resource.order_id;
+    // fallback: provider_event_id may contain the order id (used for support notes)
+    if (!orderId && data && data.provider_event_id) {
+      const tryNum = Number(data.provider_event_id);
+      if (!Number.isNaN(tryNum) && tryNum > 0) orderId = tryNum;
+    }
+
+    // if payload contains a direct user_id (support notes), prefer that
+    try {
+      const directUserId = payload && (payload.user_id || (payload.raw && payload.raw.user_id)) ? (payload.user_id || (payload.raw && payload.raw.user_id)) : null;
+      if (directUserId) {
+        try {
+          const { data: pdata } = await supabase.from('profiles').select('id, full_name, email, phone').eq('id', directUserId).limit(1).single();
+          if (pdata) {
+            data._inferred = data._inferred || {};
+            data._inferred.user = pdata;
+            data._inferred.order_id = orderId || null;
+            return res.json({ log: data });
+          }
+        } catch (profileErr) { /* ignore */ }
+      }
+    } catch (e) { /* ignore */ }
+
+    if (orderId) {
+      try {
+        const { data: odata } = await supabase.from('orders').select('user_id').eq('id', orderId).limit(1).single();
+        if (odata && odata.user_id) {
+          const uid = odata.user_id;
+          try {
+            const { data: pdata } = await supabase.from('profiles').select('id, full_name, email, phone').eq('id', uid).limit(1).single();
+            data._inferred = data._inferred || {};
+            data._inferred.order_id = orderId;
+            data._inferred.user = pdata ? pdata : { id: uid };
+          } catch (profileErr) { /* ignore */ }
+        }
+      } catch (orderErr) { /* ignore */ }
+    }
+  } catch (e) { /* ignore */ }
+
   // return as { log } to match frontend admin UI expectation
   return res.json({ log: data });
   } catch (err) {
@@ -668,7 +767,13 @@ app.put('/admin/profiles/:id', requireAdminApiKey, async (req, res) => {
       const updateUrl = `${SUPABASE_URL.replace(/\/$/, '')}/auth/v1/admin/users/${id}`;
       try {
         console.log('[backend] calling supabase admin REST to update password for', id);
-        const updateResponse = await fetchFn(updateUrl, {
+        const fetchImpl = (typeof fetch === 'function') ? fetch : (typeof fetchFn === 'function' ? fetchFn : null);
+        if (!fetchImpl) {
+          console.error('[backend] no fetch implementation available to call Supabase admin REST');
+          return res.status(500).json({ error: 'Server missing fetch implementation' });
+        }
+
+        const updateResponse = await fetchImpl(updateUrl, {
           method: 'PUT',
           headers: {
             'Content-Type': 'application/json',

@@ -86,6 +86,7 @@ const WebhooksAdmin: React.FC = () => {
                 <th className="px-4 py-3 text-left text-sm font-semibold">Nhà cung cấp</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold">Loại sự kiện</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold">Mã sự kiện</th>
+                <th className="px-4 py-3 text-left text-sm font-semibold">Người gửi</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold">Đã xác minh</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold">Đã xử lý</th>
                 <th className="px-4 py-3 text-left text-sm font-semibold">Tạo lúc</th>
@@ -99,6 +100,26 @@ const WebhooksAdmin: React.FC = () => {
                   <td className="px-4 py-3 capitalize">{log.provider}</td>
                   <td className="px-4 py-3 text-sm">{log.event_type}</td>
                   <td className="px-4 py-3 text-sm text-gray-600">{log.provider_event_id || '-'}</td>
+                  <td className="px-4 py-3 text-sm">
+                    {(() => {
+                      const inferred = (log as any)._inferred;
+                      const user = inferred && inferred.user ? inferred.user : null;
+                      if (user) return user.email || user.full_name || user.id;
+                      try {
+                        let raw: any = (log as any).raw_payload || {};
+                        if (typeof raw === 'string') {
+                          try { raw = JSON.parse(raw); } catch (e) { /* keep as string */ }
+                        }
+                        // support: raw may include sender object (newly added) - prefer email
+                        if (raw && raw.sender && (raw.sender.email || raw.sender.full_name)) return raw.sender.email || raw.sender.full_name;
+                        // support: raw may include user object or user_id for support notes
+                        if (raw && raw.user && (raw.user.email || raw.user.full_name)) return raw.user.email || raw.user.full_name;
+                        if (raw && raw.resource && raw.resource.payer && raw.resource.payer.email_address) return raw.resource.payer.email_address;
+                        if (raw && raw.user_id) return raw.user_id;
+                      } catch (e) {}
+                      return '-';
+                    })()}
+                  </td>
                   <td className="px-4 py-3">
                     {log.verified ? (
                       <span className="text-green-600 font-semibold">✓ Có</span>

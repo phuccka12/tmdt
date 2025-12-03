@@ -16,6 +16,7 @@ import FavoritesPage from './pages/Favorites';
 import RequireAdmin from './components/RequireAdmin';
 import AdminLayout from './pages/admin/AdminLayout';
 import WebhookDetail from './pages/admin/WebhookDetail';
+import WebhookAdmin from './pages/admin/WebhooksAdmin';
 export default function App() {
   return (
     <Routes>
@@ -39,7 +40,7 @@ export default function App() {
   <Route path="/user-account" element={<UserAccountPage />} />
   <Route path="admin" element={<AdminLayout />} />
   <Route path="admin/webhooks/:id" element={<RequireAdmin><WebhookDetail /></RequireAdmin>} />
-       
+  <Route path="admin/webhooks" element={<RequireAdmin><WebhookAdmin /></RequireAdmin>} />
       </Route>
     </Routes>
   );  
